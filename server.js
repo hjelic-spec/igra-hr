@@ -253,6 +253,7 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
   const p = url.pathname;
   try {
+    if (p === '/healthz') { res.writeHead(200, { 'Content-Type': 'text/plain' }); return res.end('ok'); }
     if (!p.startsWith('/api/')) {
       const file = path.join(__dirname, 'public', p === '/' ? 'index.html' : path.normalize(p).replace(/^(\.\.[/\\])+/, ''));
       if (!file.startsWith(path.join(__dirname, 'public')) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
@@ -322,5 +323,9 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-if (require.main === module) server.listen(PORT, () => console.log(`Dnevni kviz radi na http://localhost:${PORT}`));
+if (require.main === module) {
+  server.listen(PORT, () => console.log(`Dnevni kviz radi na http://localhost:${PORT}`));
+  // uredno gašenje (hosting šalje SIGTERM pri novoj verziji) da baza ostane zatvorena čisto
+  for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => server.close(() => { db.close(); process.exit(0); }));
+}
 module.exports = { server, db, RULES, getDaily, today };
