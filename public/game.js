@@ -114,7 +114,7 @@
     }
     const width = RULES.levels[0].count;
     const lines = rows.reverse().map((r, idx) => ' '.repeat(width - RULES.levels[RULES.levels.length - 1 - idx].count) + r);
-    const end = v.maxLevel === RULES.levels.length && !v.fell ? 'na vrhu ▲' : v.stopped ? 'stao na sigurnoj stepenici' : v.fell ? 'pao na sigurnu stepenicu' : '';
+    const end = v.maxLevel === RULES.levels.length && !v.fell ? 'na vrhu ▲' : v.stopped ? 'stao na sigurnoj stepenici' : v.fell ? (v.safe > 0 ? 'pao na sigurnu stepenicu' : 'uspon srušen') : '';
     return [`Dnevna piramida ${dateLabel}`, ...lines, `${v.score} bodova${end ? ' · ' + end : ''}${streak > 1 ? ' · 🔥' + streak : ''}`].join('\n');
   }
 

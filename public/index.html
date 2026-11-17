@@ -380,7 +380,7 @@ function question(run) {
 
 function finished(run, { pop = -1, event = null } = {}) {
   const summit = run.maxLevel === R.levels.length && !run.fell;
-  const title = summit ? 'Na vrhu si!' : run.stopped ? 'Stao si na sigurnom.' : run.fell ? 'Pao si na sigurnu stepenicu.' : 'Uspon je gotov.';
+  const title = summit ? 'Na vrhu si!' : run.stopped ? 'Stao si na sigurnom.' : run.fell ? (run.safe > 0 ? 'Pao si na sigurnu stepenicu.' : 'Uspon se srušio.') : 'Uspon je gotov.';
   const text = Game.shareText(run, fmtDate(today), streak);
   $('#app').innerHTML = `<div class="fade-in">
     ${pyramid(run, { pop })}
