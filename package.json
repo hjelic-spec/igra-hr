@@ -1,0 +1,11 @@
+{
+  "name": "dnevni-kviz",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Dnevni kviz-izazov: piramida pitanja, ista za sve igrače, jednom dnevno.",
+  "engines": { "node": ">=22.13" },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test/*.test.js"
+  }
+}
