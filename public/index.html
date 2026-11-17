@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Dnevna piramida</title>
+<title>Dnevne skale</title>
 <style>
   :root { --bg:#f6f4ef; --card:#fff; --ink:#1d1d1f; --muted:#6b6b70; --line:#e2dfd7; --accent:#2f5d50; --accent-ink:#fff;
           --ok:#2e7d4f; --bad:#b3261e; --lv1:#cfe3d8; --lv2:#b5d3c3; --lv3:#94bfa9; --lv4:#6fa58c; --lv5:#d4a537; }
@@ -23,16 +23,18 @@
   .btn { background:var(--accent); color:var(--accent-ink); border:0; border-radius:10px; padding:11px 18px; font:inherit; font-weight:600; cursor:pointer; }
   .btn.ghost { background:none; color:var(--accent); border:1px solid var(--accent); }
   .err { color:var(--bad); min-height:1.4em; font-size:14px; }
-  .pyramid { display:flex; flex-direction:column-reverse; align-items:center; gap:4px; margin:8px 0 4px; }
-  .row { display:flex; gap:4px; justify-content:center; }
-  .cell { width:44px; height:26px; border-radius:6px; border:1px solid var(--line); display:grid; place-items:center; font-size:12px; color:var(--muted); }
-  .cell.done { color:var(--ink); font-weight:600; } .cell.miss { background:transparent !important; border-color:var(--bad); color:var(--bad); }
+  /* skale: 10 razina (redova) po 10 stepenica, odozdo prema gore, svaki red pomaknut udesno kao stepenište */
+  .ladder { display:flex; flex-direction:column-reverse; gap:3px; margin:8px auto 4px; width:max-content; max-width:100%; }
+  .row { display:flex; gap:3px; align-items:center; }
+  .tier { width:30px; font-size:11px; color:var(--muted); font-variant-numeric:tabular-nums; }
+  .cell { width:20px; height:14px; border-radius:3px; border:1px solid var(--line); }
+  .cell.done { border-color:transparent; } .cell.miss { background:color-mix(in srgb, var(--bad) 35%, transparent); border-color:var(--bad); }
   .cell.now { outline:2px solid var(--ink); outline-offset:1px; }
   .stats { display:flex; gap:16px; flex-wrap:wrap; justify-content:space-between; margin-bottom:10px; }
   .stats b { font-size:20px; display:block; }
   .q { font-size:20px; font-weight:600; margin:10px 0 14px; }
   .opts { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
-  @media (max-width:520px) { .opts { grid-template-columns:1fr; } .cell { width:36px; } header h1 { font-size:17px; } nav button { padding:5px 9px; font-size:13px; } }
+  @media (max-width:520px) { .opts { grid-template-columns:1fr; } .cell { width:17px; } .row { margin-left:0 !important; } header h1 { font-size:17px; } nav button { padding:5px 9px; font-size:13px; } }
   .opt { text-align:left; padding:14px; border-radius:10px; border:1px solid var(--line); background:var(--bg); color:var(--ink); font:inherit; cursor:pointer; }
   .opt:hover:not(:disabled) { border-color:var(--accent); }
   .opt.right { border-color:var(--ok); background:color-mix(in srgb, var(--ok) 18%, transparent); }
@@ -49,7 +51,7 @@
 </head>
 <body>
 <header>
-  <h1>▲ Dnevna piramida</h1>
+  <h1>▲ Dnevne skale</h1>
   <nav id="nav"></nav>
 </header>
 <main id="app"></main>
@@ -74,21 +76,21 @@ function nav() {
 }
 function go(v, arg) { view = v; clearInterval(timerId); nav(); ({ play, board, profile, login })[v](arg); }
 
-function pyramid(qIndex, finished) {
-  let i = 0; const rows = [];
-  for (const l of rules.levels) {
+function ladder(qIndex, finished) {
+  const rows = [];
+  for (let t = 1; t <= rules.tiers; t++) {
     const cells = [];
-    for (let k = 0; k < l.count; k++, i++) {
-      const h = history[i]; let cls = 'cell', label = l.points;
+    for (let i = (t - 1) * rules.stepsPerTier; i < Math.min(t * rules.stepsPerTier, rules.steps); i++) {
+      const h = history[i]; let cls = 'cell';
       if (h) cls += h.correct ? ' done' : ' miss';
-      if (h && h.correct) cls += '';
-      const style = h && h.correct ? `background:var(--lv${l.level})` : '';
       if (!finished && i === qIndex) cls += ' now';
-      cells.push(`<div class="${cls}" style="${style}" title="Razina ${l.level}">${h ? (h.correct ? '✓' : '✗') : label}</div>`);
+      // boja ispunjene stepenice tamni kako razina raste
+      const style = h && h.correct ? `background:color-mix(in srgb, var(--accent) ${25 + t * 7}%, transparent)` : '';
+      cells.push(`<div class="${cls}" style="${style}" title="Stepenica ${i + 1}"></div>`);
     }
-    rows.push(`<div class="row">${cells.join('')}</div>`);
+    rows.push(`<div class="row" style="margin-left:${(t - 1) * 6}px"><span class="tier">R${t}</span>${cells.join('')}</div>`);
   }
-  return `<div class="pyramid">${rows.join('')}</div>`;
+  return `<div class="ladder" aria-label="Skale od ${rules.steps} stepenica">${rows.join('')}</div>`;
 }
 
 async function play() {
@@ -99,12 +101,12 @@ async function play() {
     history = [];
     app.innerHTML = `<div class="card">
       <h2 style="margin-top:0">Izazov za ${new Date(d.date).toLocaleDateString('hr-HR')}</h2>
-      ${pyramid(-1, true)}
-      <p>Danas svi igrači dobivaju istu piramidu od ${rules.levels.reduce((a,l)=>a+l.count,0)} pitanja. Kreneš od dna (lakša pitanja) i penješ se prema vrhu.</p>
+      ${ladder(-1, true)}
+      <p>Pred tobom je ${rules.steps} stepenica do vrha, u ${rules.tiers} razina težine. Svaka stepenica je malo teža i vrijedi bod više od prethodne.${rules.mode === 'shared' ? ' Danas svi igrači dobivaju ista pitanja.' : ' Svi igrači penju se po jednako teškim stepenicama, a pitanja se biraju za svakoga posebno.'}</p>
       <ul class="muted">
         <li>Igraš samo jednom dnevno.</li>
         <li>${rules.secondsPerQuestion} sekundi po pitanju. Brži odgovor donosi do +${rules.speedBonusShare*100} % bodova.</li>
-        <li>Imaš ${rules.lives} života: ${rules.lives - 1 === 1 ? 'jedna greška je dopuštena' : (rules.lives-1)+' greške su dopuštene'}, sljedeća završava uspon.</li>
+        <li>Imaš ${rules.lives} života. Svaka greška ili istek vremena troši jedan, a kad ih nestane, uspon je gotov.</li>
         <li>Igraj svaki dan za bonus niza: +${rules.streakBonusPerDay} bodova po danu, najviše +${rules.streakBonusMax}.</li>
       </ul>
       <button class="btn" id="start">Kreni na vrh</button></div>`;
@@ -121,12 +123,12 @@ function renderRun(run) {
   const q = run.question;
   $('#app').innerHTML = `<div class="card">
     <div class="stats">
-      <div><span class="muted">Razina</span><b>${q.level} / ${rules.levels.length}</b></div>
-      <div><span class="muted">Pitanje</span><b>${q.index + 1} / ${q.total}</b></div>
+      <div><span class="muted">Razina</span><b>${q.level} / ${rules.tiers}</b></div>
+      <div><span class="muted">Stepenica</span><b>${q.index + 1} / ${q.total}</b></div>
       <div><span class="muted">Bodovi</span><b>${run.score}</b></div>
       <div><span class="muted">Životi</span><b>${'♥'.repeat(run.lives)}${'♡'.repeat(rules.lives - run.lives)}</b></div>
     </div>
-    ${pyramid(q.index, false)}
+    ${ladder(q.index, false)}
     <div class="q">${esc(q.text)}</div>
     <div class="opts">${q.options.map((o,i)=>`<button class="opt" data-i="${i}">${esc(o)}</button>`).join('')}</div>
     <div class="timer"><i id="bar" style="width:${q.secondsLeft / rules.secondsPerQuestion * 100}%"></i></div>
@@ -158,14 +160,14 @@ function renderRun(run) {
 }
 
 function renderDone(run) {
-  const summit = run.maxLevel === rules.levels.length;
+  const summit = run.maxLevel === rules.steps;
   $('#app').innerHTML = `<div class="card">
     <h2 style="margin-top:0">${summit ? 'Stigao si na vrh! ▲' : 'Današnji uspon je gotov'}</h2>
-    ${history.length ? pyramid(-1, true) : ''}
+    ${history.length ? ladder(-1, true) : ''}
     <div class="stats">
       <div><span class="muted">Ukupno</span><b>${run.score}</b></div>
       <div><span class="muted">Točni odgovori</span><b>${run.correctCount}</b></div>
-      <div><span class="muted">Najviša razina</span><b>${run.maxLevel}</b></div>
+      <div><span class="muted">Najviša stepenica</span><b>${run.maxLevel}</b></div>
     </div>
     <p class="muted">Osnovni bodovi ${run.baseScore} · brzina +${run.speedBonus} · niz +${run.streakBonus}</p>
     <p>Nova piramida stiže sutra u ponoć (hrvatsko vrijeme).</p>
@@ -177,7 +179,7 @@ async function board(period = 'daily') {
   const t = { daily:'Danas', weekly:'Ovaj tjedan', alltime:'Ukupno' };
   $('#app').innerHTML = `<div class="card">
     <div class="tabs">${Object.entries(t).map(([k,l])=>`<button class="${k===period?'on':''}" data-p="${k}">${l}</button>`).join('')}</div>
-    ${d.rows.length ? `<table><tr><th>#</th><th>Igrač</th><th class="n">Bodovi</th><th class="n">Najviša razina</th>${period!=='daily'?'<th class="n">Igara</th>':''}</tr>
+    ${d.rows.length ? `<table><tr><th>#</th><th>Igrač</th><th class="n">Bodovi</th><th class="n">Najviša stepenica</th>${period!=='daily'?'<th class="n">Igara</th>':''}</tr>
       ${d.rows.map((r,i)=>`<tr><td>${i+1}</td><td><a data-u="${esc(r.username)}">${esc(r.username)}</a></td><td class="n">${r.score}</td><td class="n">${r.max_level}</td>${period!=='daily'?`<td class="n">${r.games}</td>`:''}</tr>`).join('')}</table>`
       : '<p class="muted">Još nitko nije završio izazov u ovom razdoblju.</p>'}
     <p class="muted">Kod jednakih bodova bolji je igrač s kraćim ukupnim vremenom odgovaranja.</p></div>`;
@@ -192,13 +194,13 @@ async function profile(name) {
     <h2 style="margin-top:0">${esc(p.username)}</h2>
     <p class="muted">Igra od ${new Date(p.since).toLocaleDateString('hr-HR')}</p>
     <div class="stats">
-      <div><span class="muted">Najviša razina</span><b>${p.max_level} / ${rules.levels.length}</b></div>
+      <div><span class="muted">Najviša stepenica</span><b>${p.max_level} / ${rules.steps}</b></div>
       <div><span class="muted">Puta na vrhu</span><b>${p.summits}</b></div>
       <div><span class="muted">Najbolji rezultat</span><b>${p.best_score}</b></div>
       <div><span class="muted">Niz dana</span><b>${p.streak} <span class="muted">(rekord ${p.bestStreak})</span></b></div>
       <div><span class="muted">Odigrano</span><b>${p.games}</b></div>
     </div>
-    ${p.recent.length ? `<table><tr><th>Datum</th><th class="n">Bodovi</th><th class="n">Razina</th><th class="n">Točno</th></tr>
+    ${p.recent.length ? `<table><tr><th>Datum</th><th class="n">Bodovi</th><th class="n">Stepenica</th><th class="n">Točno</th></tr>
       ${p.recent.map(r=>`<tr><td>${new Date(r.date).toLocaleDateString('hr-HR')}</td><td class="n">${r.score}</td><td class="n">${r.max_level}</td><td class="n">${r.correct_count}</td></tr>`).join('')}</table>` : ''}
   </div>`;
 }

@@ -12,22 +12,22 @@ const TZ = 'Europe/Zagreb';
 
 // ---------- Pravila igre (sve na jednom mjestu) ----------
 const RULES = {
-  // piramida: koliko pitanja po razini (dno → vrh) i koliko bodova nosi točan odgovor
-  levels: [
-    { level: 1, count: 5, points: 10 },
-    { level: 2, count: 4, points: 20 },
-    { level: 3, count: 3, points: 40 },
-    { level: 4, count: 2, points: 80 },
-    { level: 5, count: 1, points: 160 },
-  ],
-  secondsPerQuestion: 20,
+  steps: 100,             // stepenica do vrha
+  stepsPerTier: 10,       // 10 razina težine po 10 stepenica; pitanja u questions.js imaju razinu 1–10
+  // 'personal': svatko dobiva svoja pitanja iste težine (treba ~100 pitanja po razini)
+  // 'shared':   svi dobivaju ista pitanja tog dana (treba 100 novih pitanja dnevno)
+  mode: process.env.QUESTION_MODE === 'shared' ? 'shared' : 'personal',
+  secondsPerQuestion: 12,
   graceMs: 1500,          // tolerancija za mrežno kašnjenje
-  lives: 2,               // 2 = jedna greška je dopuštena, druga završava igru
-  speedBonusShare: 0.5,   // najviše +50 % bodova pitanja za trenutni odgovor
-  streakBonusPerDay: 5,   // +5 bodova za svaki uzastopni dan nakon prvog
-  streakBonusMax: 50,
+  lives: 3,               // svaka greška ili istek vremena troši jedan život
+  speedBonusShare: 0.5,   // najviše +50 % bodova stepenice za trenutni odgovor
+  streakBonusPerDay: 20,  // bonus za svaki uzastopni dan nakon prvog
+  streakBonusMax: 200,
+  recentDays: 30,         // u načinu 'personal' izbjegavaj pitanja koja je igrač vidio u zadnjih 30 dana
 };
-const PLAN = RULES.levels.flatMap(l => Array.from({ length: l.count }, () => l));
+const TIERS = Math.ceil(RULES.steps / RULES.stepsPerTier);
+const tierOf = stepIndex => Math.floor(stepIndex / RULES.stepsPerTier) + 1;   // stepIndex od 0
+const pointsOf = stepIndex => stepIndex + 1;                                    // stepenica n vrijedi n bodova
 
 // ---------- Baza ----------
 const db = new DatabaseSync(DB_FILE);
@@ -49,16 +49,20 @@ CREATE TABLE IF NOT EXISTS runs(
   base_score INTEGER NOT NULL DEFAULT 0, speed_bonus INTEGER NOT NULL DEFAULT 0, streak_bonus INTEGER NOT NULL DEFAULT 0,
   score INTEGER NOT NULL DEFAULT 0, max_level INTEGER NOT NULL DEFAULT 0, correct_count INTEGER NOT NULL DEFAULT 0,
   served_at INTEGER, started_at INTEGER NOT NULL, finished_at INTEGER, total_ms INTEGER NOT NULL DEFAULT 0,
-  UNIQUE(user_id, date));
+  question_ids TEXT NOT NULL DEFAULT '[]', UNIQUE(user_id, date));
 CREATE TABLE IF NOT EXISTS answers(
   run_id INTEGER NOT NULL REFERENCES runs(id), q_index INTEGER NOT NULL, question_id INTEGER NOT NULL,
   chosen INTEGER, correct INTEGER NOT NULL, ms INTEGER NOT NULL, PRIMARY KEY(run_id, q_index));
 CREATE INDEX IF NOT EXISTS runs_date ON runs(date, score DESC);
 `);
+// starija baza (piramida) nema stupac question_ids
+if (!db.prepare('PRAGMA table_info(runs)').all().some(c => c.name === 'question_ids'))
+  db.exec("ALTER TABLE runs ADD COLUMN question_ids TEXT NOT NULL DEFAULT '[]'");
 
 // Učitaj početna pitanja (točan je prvi; spremamo opcije u stalnom izmiješanom redoslijedu)
 {
-  const ins = db.prepare('INSERT OR IGNORE INTO questions(level,text,options,correct) VALUES(?,?,?,?)');
+  const ins = db.prepare(`INSERT INTO questions(level,text,options,correct) VALUES(?,?,?,?)
+    ON CONFLICT(text) DO UPDATE SET level=excluded.level`);
   for (const [level, text, opts] of require('./questions.js')) {
     const order = shuffle([0, 1, 2, 3], hashSeed(text));
     ins.run(level, text, JSON.stringify(order.map(i => opts[i])), order.indexOf(0));
@@ -79,18 +83,20 @@ const today = () => fmt.format(new Date());
 function addDays(dateStr, n) { const d = new Date(dateStr + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
 function weekStart(dateStr) { const d = new Date(dateStr + 'T12:00:00Z'); const dow = (d.getUTCDay() + 6) % 7; return addDays(dateStr, -dow); }
 
-// ---------- Dnevna piramida: ista za sve igrače ----------
+// ---------- Izbor pitanja ----------
+// 'shared': dnevni niz od 100 pitanja, isti za sve igrače
 function getDaily(date) {
   const row = db.prepare('SELECT question_ids FROM daily WHERE date=?').get(date);
   if (row) return JSON.parse(row.question_ids);
   const ids = [];
-  for (const l of RULES.levels) {
+  for (let tier = 1; tier <= TIERS; tier++) {
+    const need = Math.min(RULES.stepsPerTier, RULES.steps - (tier - 1) * RULES.stepsPerTier);
     // najmanje korištena pitanja te razine; unutar istog broja korištenja deterministički redoslijed po datumu
-    const qs = db.prepare('SELECT id, times_used FROM questions WHERE level=?').all(l.level);
-    if (qs.length < l.count) throw new Error(`Premalo pitanja za razinu ${l.level}`);
-    const seed = hashSeed(date + ':' + l.level);
+    const qs = db.prepare('SELECT id, times_used FROM questions WHERE level=?').all(tier);
+    if (qs.length < need) throw new Error(`Premalo pitanja za razinu ${tier}: ${qs.length}/${need}`);
+    const seed = hashSeed(date + ':' + tier);
     qs.sort((a, b) => a.times_used - b.times_used || hashSeed(seed + ':' + a.id) - hashSeed(seed + ':' + b.id));
-    ids.push(...qs.slice(0, l.count).map(q => q.id));
+    ids.push(...qs.slice(0, need).map(q => q.id));
   }
   db.exec('BEGIN');
   try {
@@ -102,6 +108,26 @@ function getDaily(date) {
     db.exec('COMMIT');
   } catch (e) { db.exec('ROLLBACK'); throw e; }
   return ids;
+}
+
+// 'personal': nasumično pitanje zadane razine koje igrač nije vidio u ovoj igri, po mogućnosti ni nedavno
+function pickPersonal(userId, stepIndex, usedIds, date) {
+  const tier = tierOf(stepIndex);
+  const used = new Set(usedIds);
+  const recent = new Set(db.prepare(`SELECT a.question_id id FROM answers a JOIN runs r ON r.id=a.run_id
+    WHERE r.user_id=? AND r.date>=?`).all(userId, addDays(date, -RULES.recentDays)).map(r => r.id));
+  const all = db.prepare('SELECT id, level FROM questions').all();
+  const pick = list => list.length ? list[crypto.randomInt(list.length)].id : null;
+  const fresh = q => !used.has(q.id);
+  // redom: ista razina i neviđeno → ista razina → najbliža niža pa viša razina → bilo što neiskorišteno → bilo što
+  const sameTier = all.filter(q => q.level === tier && fresh(q));
+  let id = pick(sameTier.filter(q => !recent.has(q.id))) ?? pick(sameTier);
+  for (let d = 1; id === null && d < TIERS; d++)
+    id = pick(all.filter(q => q.level === tier - d && fresh(q))) ?? pick(all.filter(q => q.level === tier + d && fresh(q)));
+  return id ?? pick(all.filter(fresh)) ?? pick(all);
+}
+function questionFor(run, user, stepIndex, usedIds) {
+  return RULES.mode === 'shared' ? getDaily(run.date)[stepIndex] : pickPersonal(user.id, stepIndex, usedIds, run.date);
 }
 
 // ---------- Lozinke i sesije ----------
@@ -127,24 +153,23 @@ function rateLimited(key) {
 }
 
 // ---------- Logika igre ----------
-function publicQuestion(run, ids) {
-  const q = db.prepare('SELECT id, text, options FROM questions WHERE id=?').get(ids[run.q_index]);
-  const step = PLAN[run.q_index];
+function publicQuestion(run) {
+  const q = db.prepare('SELECT id, text, options FROM questions WHERE id=?').get(JSON.parse(run.question_ids)[run.q_index]);
   const elapsed = Date.now() - run.served_at;
   return {
-    index: run.q_index, total: PLAN.length, level: step.level, points: step.points,
+    index: run.q_index, total: RULES.steps, level: tierOf(run.q_index), points: pointsOf(run.q_index),
     text: q.text, options: JSON.parse(q.options),
     secondsLeft: Math.max(0, Math.ceil((RULES.secondsPerQuestion * 1000 - elapsed) / 1000)),
   };
 }
-function runState(run, ids) {
+function runState(run) {
   const s = {
     status: run.status, lives: run.lives, score: run.score, baseScore: run.base_score,
     speedBonus: run.speed_bonus, streakBonus: run.streak_bonus, maxLevel: run.max_level,
     correctCount: run.correct_count, qIndex: run.q_index,
     answers: db.prepare('SELECT correct FROM answers WHERE run_id=? ORDER BY q_index').all(run.id).map(a => a.correct === 1),
   };
-  if (run.status === 'playing') s.question = publicQuestion(run, ids);
+  if (run.status === 'playing') s.question = publicQuestion(run);
   return s;
 }
 function finishRun(run, user, date) {
@@ -172,9 +197,9 @@ function answer(user, body) {
   const run = db.prepare('SELECT * FROM runs WHERE user_id=? AND date=?').get(user.id, date);
   if (!run || run.status !== 'playing') return [409, { error: 'Nema aktivne igre.' }];
   if (body.index !== run.q_index) return [409, { error: 'Pitanje je već odgovoreno.' }];
-  const ids = getDaily(run.date);
+  const ids = JSON.parse(run.question_ids);
   const q = db.prepare('SELECT * FROM questions WHERE id=?').get(ids[run.q_index]);
-  const step = PLAN[run.q_index];
+  const points = pointsOf(run.q_index);
   const ms = Date.now() - run.served_at;
   const limit = RULES.secondsPerQuestion * 1000;
   const timedOut = ms > limit + RULES.graceMs;
@@ -184,28 +209,29 @@ function answer(user, body) {
   let { lives, base_score, speed_bonus, max_level, correct_count } = run;
   let speed = 0;
   if (correct) {
-    speed = Math.round(step.points * RULES.speedBonusShare * Math.max(0, limit - ms) / limit);
-    base_score += step.points; speed_bonus += speed; correct_count++;
-    max_level = Math.max(max_level, step.level);
+    speed = Math.round(points * RULES.speedBonusShare * Math.max(0, limit - ms) / limit);
+    base_score += points; speed_bonus += speed; correct_count++;
+    max_level = Math.max(max_level, run.q_index + 1);   // najviša stepenica s točnim odgovorom
   } else lives--;
 
   const nextIndex = run.q_index + 1;
-  const over = lives <= 0 || nextIndex >= PLAN.length;
+  const over = lives <= 0 || nextIndex >= RULES.steps;
+  if (!over) ids.push(questionFor(run, user, nextIndex, ids));
   db.exec('BEGIN');
   try {
     db.prepare('INSERT INTO answers VALUES(?,?,?,?,?,?)').run(run.id, run.q_index, q.id, chosen, correct ? 1 : 0, ms);
     db.prepare(`UPDATE runs SET q_index=?, lives=?, base_score=?, speed_bonus=?, score=?, max_level=?, correct_count=?,
-                served_at=?, total_ms=total_ms+? WHERE id=?`)
+                served_at=?, total_ms=total_ms+?, question_ids=? WHERE id=?`)
       .run(over ? run.q_index : nextIndex, lives, base_score, speed_bonus, base_score + speed_bonus, max_level,
-        correct_count, over ? null : Date.now(), Math.min(ms, limit), run.id);
+        correct_count, over ? null : Date.now(), Math.min(ms, limit), JSON.stringify(ids), run.id);
     const updated = db.prepare('SELECT * FROM runs WHERE id=?').get(run.id);
     if (over) finishRun(updated, user, date);
     db.exec('COMMIT');
   } catch (e) { db.exec('ROLLBACK'); throw e; }
   const after = db.prepare('SELECT * FROM runs WHERE id=?').get(run.id);
   return [200, {
-    result: { correct, timedOut, correctChoice: q.correct, gained: correct ? step.points : 0, speedBonus: speed },
-    run: runState(after, ids),
+    result: { correct, timedOut, correctChoice: q.correct, gained: correct ? points : 0, speedBonus: speed },
+    run: runState(after),
   }];
 }
 
@@ -225,7 +251,7 @@ function profile(username) {
   const u = db.prepare('SELECT id, username, created_at, streak, best_streak, last_played FROM users WHERE username=?').get(username);
   if (!u) return null;
   const stats = db.prepare(`SELECT COUNT(*) games, COALESCE(MAX(score),0) best_score, COALESCE(MAX(max_level),0) max_level,
-    COALESCE(SUM(score),0) total, COALESCE(SUM(max_level=5),0) summits
+    COALESCE(SUM(score),0) total, COALESCE(SUM(max_level=${RULES.steps}),0) summits
     FROM runs WHERE user_id=? AND status='finished'`).get(u.id);
   const recent = db.prepare(`SELECT date, score, max_level, correct_count FROM runs
     WHERE user_id=? AND status='finished' ORDER BY date DESC LIMIT 14`).all(u.id);
@@ -290,7 +316,7 @@ const server = http.createServer(async (req, res) => {
       if (m) db.prepare('DELETE FROM sessions WHERE token=?').run(m[1]);
       return send(res, 200, {}, { 'Set-Cookie': cookie('', 0) });
     }
-    if (p === '/api/rules') return send(res, 200, { ...RULES, date: today() });
+    if (p === '/api/rules') return send(res, 200, { ...RULES, tiers: TIERS, date: today() });
     if (p === '/api/leaderboard') return send(res, 200, { period: url.searchParams.get('period') || 'daily', rows: leaderboard(url.searchParams.get('period')) });
     if (p.startsWith('/api/profile/')) {
       const pr = profile(decodeURIComponent(p.slice('/api/profile/'.length)));
@@ -303,16 +329,19 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/me') {
       const date = today();
       const run = db.prepare('SELECT * FROM runs WHERE user_id=? AND date=?').get(user.id, date);
-      return send(res, 200, { username: user.username, date, run: run ? runState(run, getDaily(date)) : null });
+      return send(res, 200, { username: user.username, date, run: run ? runState(run) : null });
     }
     if (p === '/api/run/start' && req.method === 'POST') {
-      const date = today(); const ids = getDaily(date);
-      const now = Date.now();
-      db.prepare(`INSERT OR IGNORE INTO runs(user_id, date, status, lives, served_at, started_at) VALUES(?,?,?,?,?,?)`)
-        .run(user.id, date, 'playing', RULES.lives, now, now);
+      const date = today();
+      if (!db.prepare('SELECT 1 FROM runs WHERE user_id=? AND date=?').get(user.id, date)) {
+        const first = questionFor({ date }, user, 0, []);
+        const now = Date.now();
+        db.prepare(`INSERT OR IGNORE INTO runs(user_id, date, status, lives, served_at, started_at, question_ids) VALUES(?,?,?,?,?,?,?)`)
+          .run(user.id, date, 'playing', RULES.lives, now, now, JSON.stringify([first]));
+      }
       // ako igra već postoji, vraćamo njeno stanje (ne može se ponovno pokrenuti; vrijeme teče od prvog prikaza)
       const run = db.prepare('SELECT * FROM runs WHERE user_id=? AND date=?').get(user.id, date);
-      return send(res, 200, { run: runState(run, ids) });
+      return send(res, 200, { run: runState(run) });
     }
     if (p === '/api/run/answer' && req.method === 'POST') { const [s, d] = answer(player, body); return send(res, s, d); }
 
