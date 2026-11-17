@@ -17,10 +17,10 @@ Node ispisuje upozorenje da je `node:sqlite` eksperimentalan; to je očekivano.
 Pravila su u jednom modulu koji koriste i server i probna verzija u pregledniku, pa se ne mogu razići.
 - 15 pitanja u 5 razina (5-4-3-2-1), vrijede 10, 20, 40, 80 i 160 bodova.
 - 20 s po pitanju; brzina donosi do +50 % bodova pitanja.
-- 2 života. Druga greška ruši uspon: rezultat pada na zadnju sigurnu stepenicu.
-- **Sigurne stepenice** nakon 5. i 10. pitanja: bodovi se zaključavaju, a igrač bira hoće li stati ili nastaviti.
+- Kriv odgovor ili istek vremena oduzima bodove tog pitanja.
+- 2 života: druga greška završava uspon, a konačni rezultat su bodovi u tom trenutku. Rezultat ne ide ispod 0.
 - **Dupli ili ništa**: 3 puta po igri igrač prije prikaza pitanja bira dvostruki ulog. Točno donosi dvostruko,
-  krivo oduzima dvostruko (i troši život), ali rezultat ne može pasti ispod zaključanih bodova.
+  krivo oduzima dvostruko (i troši život).
 - **Niz dana**: +5 bodova po uzastopnom danu, najviše +50; u zaglavlju se prikazuje 🔥.
 - **Dijeljenje**: na kraju se kopira piramida od emojija (🟩 🟨 🟥 💥) bez ijednog pitanja ili odgovora.
 - Novi dan počinje u ponoć po hrvatskom vremenu (Europe/Zagreb); kraj igre prikazuje odbrojavanje.

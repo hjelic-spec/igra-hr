@@ -147,12 +147,11 @@ function finishRun(row, st, user, date) {
   db.prepare('UPDATE users SET streak=?, best_streak=MAX(best_streak, ?), last_played=? WHERE id=?').run(streak, streak, date, user.id);
 }
 
-// Igra iz prethodnog dana koja nije dovršena (zatvoren preglednik): vrijedi kao da je stao, ali samo sa sigurnim bodovima.
+// Igra iz prethodnog dana koja nije dovršena (zatvoren preglednik) zaključuje se s bodovima koje je igrač imao.
 function closeStaleRuns(user) {
   const stale = db.prepare("SELECT * FROM runs WHERE user_id=? AND status='playing' AND date<? ORDER BY date").all(user.id, today());
   for (const row of stale) {
     const st = stateOf(row);
-    st.fell = st.base + st.speed > st.safe;
     finishRun(row, st, db.prepare('SELECT * FROM users WHERE id=?').get(user.id), row.date);
   }
   return stale.length ? db.prepare('SELECT * FROM users WHERE id=?').get(user.id) : user;
@@ -191,15 +190,6 @@ function answer(user, body) {
     return r;
   });
   return [200, { result, run: runView(loadRun(user.id, date)) }];
-}
-
-function stopRun(user) {
-  const date = today(); const row = loadRun(user.id, date);
-  if (!row || row.status !== 'playing') return [409, { error: 'Nema aktivne igre.' }];
-  const st = stateOf(row);
-  if (!Game.canStop(st)) return [409, { error: 'Stati se može samo na sigurnoj stepenici.' }];
-  tx(() => { Game.stop(st); finishRun(row, st, user, date); });
-  return [200, { run: runView(loadRun(user.id, date)) }];
 }
 
 function leaderboard(period) {
@@ -307,7 +297,6 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/api/run/next' && req.method === 'POST') { const [s, d] = next(player, body); return send(res, s, d); }
     if (p === '/api/run/answer' && req.method === 'POST') { const [s, d] = answer(player, body); return send(res, s, d); }
-    if (p === '/api/run/stop' && req.method === 'POST') { const [s, d] = stopRun(player); return send(res, s, d); }
 
     send(res, 404, { error: 'Nepoznata ruta.' });
   } catch (e) {

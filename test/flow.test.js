@@ -60,7 +60,6 @@ test('savršen uspon s tri dupla uloga', async () => {
   const c = await player('marko');
   let run = (await c('run/start', {})).body.run, doubles = 0;
   while (run.status !== 'finished') {
-    if (run.canStop) assert.ok([5, 10].includes(run.q));
     const want = run.q >= 12;                      // ulog na zadnja tri pitanja
     const r = await play(c, run, { double: want });
     assert.ok(r.result.correct);
@@ -77,47 +76,35 @@ test('savršen uspon s tri dupla uloga', async () => {
   assert.equal((await c('run/next', { q: 0 })).status, 409);
 });
 
-test('dvije greške: pad na zadnju sigurnu stepenicu', async () => {
+test('kriv odgovor oduzima bodove pitanja; druga greška završava igru s tadašnjim bodovima', async () => {
   const c = await player('luka');
   let run = (await c('run/start', {})).body.run;
-  for (let i = 0; i < 5; i++) run = (await play(c, run)).run;   // 5 točnih → sigurno
-  assert.equal(run.q, 5); assert.ok(run.canStop); assert.equal(run.safe, run.current);
-  const safe = run.safe;
-  run = (await play(c, run)).run;                                // 6. točno, bodovi rastu
-  assert.ok(run.current > safe);
-  run = (await play(c, run, { right: false })).run;              // prva greška
-  assert.equal(run.lives, 1); assert.equal(run.status, 'ready');
-  const r = await play(c, run, { right: false });                // druga greška → pad
-  assert.equal(r.run.status, 'finished'); assert.ok(r.run.fell); assert.equal(r.run.score, safe);
-  assert.equal(r.result.event, 'fell');
+  for (let i = 0; i < 6; i++) run = (await play(c, run)).run;   // 5 × 10 + 1 × 20 (+ brzina)
+  const before = run.current;
+  let r = await play(c, run, { right: false });                  // 7. pitanje (20 bodova) krivo
+  assert.equal(r.result.gained, -20); assert.equal(r.run.current, before - 20);
+  assert.equal(r.run.lives, 1); assert.equal(r.run.status, 'ready');
+  run = r.run; const mid = run.current;
+  r = await play(c, run, { right: false });                      // 8. pitanje krivo → kraj
+  assert.equal(r.result.event, 'out');
+  assert.equal(r.run.status, 'finished'); assert.ok(r.run.out);
+  assert.equal(r.run.score, mid - 20);
+  assert.equal((await c('run/stop', {})).status, 404);           // nema više stajanja
 });
 
-test('stani na sigurnoj stepenici zadržava bodove; ne može se stati drugdje', async () => {
-  const c = await player('stani');
-  let run = (await c('run/start', {})).body.run;
-  run = (await play(c, run)).run;
-  assert.equal((await c('run/stop', {})).status, 409);
-  for (let i = 1; i < 5; i++) run = (await play(c, run)).run;
-  const s = await c('run/stop', {});
-  assert.equal(s.status, 200); assert.equal(s.body.run.status, 'finished'); assert.ok(s.body.run.stopped);
-  assert.equal(s.body.run.score, run.current);
-});
-
-test('dupli ili ništa: kriva oklada oduzima dvostruko, ali ne ispod sigurnih bodova', async () => {
+test('dupli ili ništa: krivo oduzima dvostruko; rezultat ne ide ispod nule', async () => {
   const c = await player('ulog');
   let run = (await c('run/start', {})).body.run;
-  let r = await play(c, run, { right: false, double: true });   // 1. pitanje: 0 bodova, ne ide u minus
+  let r = await play(c, run, { right: false, double: true });   // 1. pitanje krivo uz ulog: s 0 ostaje 0
   assert.equal(r.result.gained, 0); assert.equal(r.run.current, 0); assert.equal(r.run.doublesLeft, 2);
   run = r.run;
-  for (let i = 1; i < 5; i++) run = (await play(c, run)).run;   // do sigurne stepenice
-  const safe = run.safe;
-  r = await play(c, run, { right: true, double: true });         // 6. pitanje (20 bodova) ×2
+  for (let i = 1; i < 6; i++) run = (await play(c, run)).run;    // 4 × 10 + 20
+  r = await play(c, run, { right: true, double: true });         // 7. pitanje (20) ×2
   assert.equal(r.result.gained, 40);
-  const before = r.run.current; run = r.run;
-  r = await play(c, run, { right: false, double: true });        // 7. pitanje krivo uz ulog: −40, ali ne ispod sigurnog
-  assert.equal(r.run.status, 'finished');                         // to je bila druga greška
-  assert.equal(r.run.score, safe);
-  assert.ok(before - 40 >= safe); assert.equal(r.result.gained, -40);
+  const before = r.run.current;
+  r = await play(c, r.run, { right: false, double: true });      // 8. pitanje krivo uz ulog: −40, druga greška
+  assert.equal(r.result.gained, -40);
+  assert.equal(r.run.status, 'finished'); assert.equal(r.run.score, before - 40);
 });
 
 test('istek vremena se računa na serveru', async () => {
@@ -144,7 +131,7 @@ test('bonus niza za uzastopne dane', async () => {
 });
 
 test('tekst za dijeljenje ne sadrži pitanja ni odgovore', () => {
-  const v = { answers: [{ c: true, d: false }, { c: false, d: true }, { c: true, d: true }], score: 77, maxLevel: 1, fell: false, stopped: false };
+  const v = { answers: [{ c: true, d: false }, { c: false, d: true }, { c: true, d: true }], score: 77, maxLevel: 1, out: false };
   const t = Game.shareText(v, '17. 11. 2026.', 4);
   assert.match(t, /^Dnevna piramida 17\. 11\. 2026\./);
   assert.ok(t.includes('🟩💥🟨⬜⬜')); assert.ok(t.includes('77 bodova')); assert.ok(t.includes('🔥4'));
@@ -161,15 +148,15 @@ test('ljestvice i profil', async () => {
   assert.equal((await c('profile/nitko')).status, 404);
 });
 
-test('nedovršena igra od jučer se zaključuje sa sigurnim bodovima', async () => {
+test('nedovršena igra od jučer se zaključuje s bodovima koje je igrač imao', async () => {
   const c = await player('stari');
   const uid = db.prepare("SELECT id FROM users WHERE username='stari'").get().id;
   const y = new Date(today() + 'T12:00:00Z'); y.setUTCDate(y.getUTCDate() - 1); const yd = y.toISOString().slice(0, 10);
-  const st = { ...Game.newRun(), q: 7, base: 90, speed: 10, safe: 60 };
+  const st = { ...Game.newRun(), q: 7, base: 90, speed: 10 };
   db.prepare("INSERT INTO runs(user_id,date,status,lives,started_at,state) VALUES(?,?,?,?,?,?)").run(uid, yd, 'playing', 2, Date.now(), JSON.stringify(st));
   await c('me');
   const r = db.prepare('SELECT status, score FROM runs WHERE user_id=? AND date=?').get(uid, yd);
-  assert.equal(r.status, 'finished'); assert.equal(r.score, 60);
+  assert.equal(r.status, 'finished'); assert.equal(r.score, 100);
   let run = (await c('run/start', {})).body.run;
   while (run.status !== 'finished') run = (await play(c, run, { right: false })).run;
   assert.equal((await c('profile/stari')).body.streak, 2);
