@@ -13,12 +13,18 @@ npm test           # 8 automatskih testova
 Varijable: `PORT`, `DB_FILE` (put do SQLite baze), `NODE_ENV=production` (kolačić samo preko HTTPS-a).
 Node ispisuje upozorenje da je `node:sqlite` eksperimentalan; to je očekivano.
 
-## Pravila (u `server.js`, objekt `RULES`)
+## Pravila (u `public/game.js`, objekt `RULES`)
+Pravila su u jednom modulu koji koriste i server i probna verzija u pregledniku, pa se ne mogu razići.
+- 15 pitanja u 5 razina (5-4-3-2-1), vrijede 10, 20, 40, 80 i 160 bodova.
 - 20 s po pitanju; brzina donosi do +50 % bodova pitanja.
-- 2 života: jedna greška dopuštena, druga završava uspon. Istek vremena je greška.
-- Niz dana: +5 bodova po uzastopnom danu, najviše +50.
-- Novi dan počinje u ponoć po hrvatskom vremenu (Europe/Zagreb).
-- Ljestvice: danas, ovaj tjedan (od ponedjeljka), ukupno. Kod jednakih bodova bolji je brži.
+- 2 života. Druga greška ruši uspon: rezultat pada na zadnju sigurnu stepenicu.
+- **Sigurne stepenice** nakon 5. i 10. pitanja: bodovi se zaključavaju, a igrač bira hoće li stati ili nastaviti.
+- **Dupli ili ništa**: 3 puta po igri igrač prije prikaza pitanja bira dvostruki ulog. Točno donosi dvostruko,
+  krivo oduzima dvostruko (i troši život), ali rezultat ne može pasti ispod zaključanih bodova.
+- **Niz dana**: +5 bodova po uzastopnom danu, najviše +50; u zaglavlju se prikazuje 🔥.
+- **Dijeljenje**: na kraju se kopira piramida od emojija (🟩 🟨 🟥 💥) bez ijednog pitanja ili odgovora.
+- Novi dan počinje u ponoć po hrvatskom vremenu (Europe/Zagreb); kraj igre prikazuje odbrojavanje.
+- Zvuk i vibracija (gdje uređaj podržava) mogu se isključiti gumbom 🔊.
 
 ## Zaštita od varanja (što prototip radi)
 - Točan odgovor nikad ne ide pregledniku prije odgovora; provjera je na serveru.
