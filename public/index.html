@@ -370,7 +370,7 @@ function question(run) {
   paint();
   const tick = () => {
     left--; if (!paint()) return clearInterval(timerId);
-    if (left <= 5) { $('#tm').classList.add('low'); if (left > 0) sfx.tick(); }
+    if (left <= 3) { $('#tm').classList.add('low'); if (left > 0) sfx.tick(); }
     if (left <= 0) submit(null);
   };
   timerId = setInterval(tick, 1000);

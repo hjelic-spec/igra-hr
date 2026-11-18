@@ -197,7 +197,7 @@ test('nedovršena igra od jučer se zaključuje s bodovima koje je igrač imao',
   assert.equal((await c('profile/stari')).body.streak, 2);
 });
 
-test('rezerva vremena: brz točan odgovor sprema 2 s (najviše 10), sat je troši nakon osnovnih 20 s', () => {
+test('rezerva vremena: brz točan odgovor sprema 2 s (najviše 10), sat je troši nakon osnovnog vremena', () => {
   const T = RULES.timeBank, base = RULES.secondsPerQuestion * 1000;
   const st = Game.newRun();
   let t = 0;
@@ -207,11 +207,11 @@ test('rezerva vremena: brz točan odgovor sprema 2 s (najviše 10), sat je troš
   assert.equal(q(1000, false).bankEarned, 0);                    // brz, ali kriv: ništa
   for (let i = 0; i < 6; i++) q(1000);
   assert.equal(st.bankMs, T.maxMs);                              // strop 10 s
-  // pitanje s rezervom: odgovor u 26. sekundi vrijedi i troši 6 s rezerve
+  // pitanje s rezervom: odgovor 6 s nakon osnovnog vremena vrijedi i troši 6 s rezerve
   Game.serve(st, false, t);
   assert.equal(Game.view(st, { text: 'x', options: [] }, t).question.reserveSec, 10);
-  assert.equal(Game.view(st, { text: 'x', options: [] }, t).question.totalLeft, 30);
-  t += 26000; const r = Game.answer(st, 0, 0, t);
+  assert.equal(Game.view(st, { text: 'x', options: [] }, t).question.totalLeft, base / 1000 + 10);
+  t += base + 6000; const r = Game.answer(st, 0, 0, t);
   assert.ok(r.correct); assert.equal(r.bankUsed, 6000); assert.equal(st.bankMs, 4000);
   // bez dovoljno rezerve: istek vremena i rezerva je potrošena do kraja
   Game.serve(st, false, t); t += base + 4000 + RULES.graceMs + 1; const r2 = Game.answer(st, 0, 0, t);

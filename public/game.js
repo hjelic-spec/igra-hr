@@ -11,7 +11,7 @@
       { level: 4, count: 2, points: 80 },
       { level: 5, count: 1, points: 160 },
     ],
-    secondsPerQuestion: 20,
+    secondsPerQuestion: 10,
     graceMs: 1500,                // tolerancija za mrežno kašnjenje
     lives: 2,                     // druga greška završava uspon; vrijede bodovi u tom trenutku
     speedBonusShare: 0.5,         // najviše +50 % bodova pitanja za brz odgovor
@@ -20,8 +20,8 @@
     // Svaka 3 takva odgovora donose još jedan ulog ×2 (multStep 0: svi ulozi su ×2; 1 bi davao ×2, ×3, ×4 ...).
     // Ulozi se skupljaju i troše redom kojim su zarađeni; kriv ili spor odgovor ruši brzi niz.
     earnDouble: { streak: 3, withinMs: 3000, firstMult: 2, multStep: 0 },
-    // Rezerva vremena: točan odgovor unutar 5 s sprema +2 s (najviše 10 s). Kad osnovnih 20 s istekne,
-    // sat automatski troši rezervu. Potrošeno se oduzima; server računa rok kao 20 s + rezerva u trenutku prikaza.
+    // Rezerva vremena: točan odgovor unutar 5 s sprema +2 s (najviše 10 s). Kad osnovnih 10 s istekne,
+    // sat automatski troši rezervu. Potrošeno se oduzima; server računa rok kao 10 s + rezerva u trenutku prikaza.
     timeBank: { fastMs: 5000, earnMs: 2000, maxMs: 10000 },
     streakBonusPerDay: 5,         // +5 bodova po uzastopnom danu nakon prvog
     streakBonusMax: 50,
