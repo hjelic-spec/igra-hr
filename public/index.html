@@ -247,7 +247,7 @@ function hud(run) {
   const hearts = '♥'.repeat(run.lives) + '♡'.repeat(R.lives - run.lives);
   return `<div class="hud">
     <div><small>Bodovi</small><b id="cur">${run.current}</b></div>
-    <div class="dbl"><small>${run.doublesLeft ? 'Dupli ×2' : 'Brzi niz ⚡'}</small><b>${run.doublesLeft ? '×2 ✓' : `${run.fastStreak} / ${R.earnDouble.streak}`}</b></div>
+    <div class="dbl"><small>Dupli ×2 · ⚡ ${run.fastStreak}/${R.earnDouble.streak}</small><b aria-label="Zarađenih duplih uloga: ${run.doublesLeft}">${run.doublesLeft}</b></div>
     <div class="lives"><small>Životi</small><b aria-label="${run.lives} od ${R.lives}">${hearts}</b></div></div>`;
 }
 function floatText(t, bad) {
@@ -282,7 +282,7 @@ function intro() {
       <li><span>⏱</span><span>${R.secondsPerQuestion} sekundi po pitanju. Brži odgovor donosi do +${R.speedBonusShare * 100} % bodova.</span></li>
       <li><span>−</span><span>Kriv odgovor ili istek vremena oduzima bodove tog pitanja.</span></li>
       <li><span>♥</span><span>Imaš ${R.lives} života. Druga greška završava uspon, a vrijede bodovi koje tada imaš.</span></li>
-      <li><span>⚡</span><span><b>Dupli ili ništa se zarađuje</b>: ${R.earnDouble.streak} točna odgovora zaredom, svaki za manje od ${R.earnDouble.withinMs / 1000} sekunde. Ulog biraš prije nego što vidiš pitanje: točno donosi dvostruko, krivo oduzima dvostruko.</span></li>
+      <li><span>⚡</span><span><b>Dupli ili ništa se zarađuje</b>: ${R.earnDouble.streak} točna odgovora zaredom, svaki za manje od ${R.earnDouble.withinMs / 1000} sekunde. Svaka takva trojka donosi novi ulog. Ulog biraš prije nego što vidiš pitanje: točno donosi dvostruko, krivo oduzima dvostruko.</span></li>
       <li><span>🔥</span><span>Igraj svaki dan za bonus niza: +${R.streakBonusPerDay} bodova po danu, najviše +${R.streakBonusMax}.</span></li>
     </ul>
     <button class="btn wide" id="start" style="margin-top:20px">Kreni na uspon</button></div>`;
@@ -299,11 +299,10 @@ function ready(run, { pop = -1, event = null } = {}) {
       <h2>Vrijedi ${n.points} bodova</h2>
       <button class="double" id="dbl" aria-pressed="${wantDouble && run.doublesLeft > 0}" ${run.doublesLeft ? '' : 'disabled'}>
         <span class="sw" aria-hidden="true"></span>
-        <span><strong>Dupli ili ništa${run.doublesLeft ? ' · zarađen' : ''}</strong><span class="small">${run.doublesLeft
+        <span><strong>Dupli ili ništa${run.doublesLeft ? ` · imaš ${run.doublesLeft}` : ''}</strong><span class="small">${run.doublesLeft
           ? `točno +${n.points * 2}, krivo −${n.points * 2}`
           : `Zaradi ga: ${R.earnDouble.streak} točna zaredom, svaki za manje od ${R.earnDouble.withinMs / 1000} s`}</span></span>
-        <span class="pips" aria-label="Brzi niz ${run.fastStreak} od ${R.earnDouble.streak}">${run.doublesLeft ? '<b style="color:var(--ember);font-family:var(--font-display)">×2</b>'
-          : Array.from({ length: R.earnDouble.streak }, (_, k) => `<i class="${k < run.fastStreak ? '' : 'used'}"></i>`).join('')}</span>
+        <span class="pips" aria-label="Brzi niz ${run.fastStreak} od ${R.earnDouble.streak}">${Array.from({ length: R.earnDouble.streak }, (_, k) => `<i class="${k < run.fastStreak ? '' : 'used'}"></i>`).join('')}</span>
       </button>
       <button class="btn wide" id="go" style="margin-top:14px">Prikaži pitanje</button>
     </div></div>`;

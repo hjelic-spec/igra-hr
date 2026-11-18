@@ -20,7 +20,7 @@ Pravila su u jednom modulu koji koriste i server i probna verzija u pregledniku,
 - Kriv odgovor ili istek vremena oduzima bodove tog pitanja.
 - 2 života: druga greška završava uspon, a konačni rezultat su bodovi u tom trenutku. Rezultat ne ide ispod 0.
 - **Dupli ili ništa se zarađuje**: 3 točna odgovora zaredom, svaki unutar 3 s od prikaza pitanja (mjeri server),
-  donose jedan dupli ulog; čuva se najviše jedan. Kriv ili sporiji odgovor ruši brzi niz. Ulog se bira prije prikaza
+  donose dupli ulog, svaka sljedeća trojka još jedan (skupljaju se). Kriv ili sporiji odgovor ruši brzi niz. Ulog se bira prije prikaza
   pitanja: točno donosi dvostruko, krivo oduzima dvostruko. Pragovi su u `RULES.earnDouble`.
 - **Niz dana**: +5 bodova po uzastopnom danu, najviše +50; u zaglavlju se prikazuje 🔥.
 - **Dijeljenje**: na kraju se kopira piramida od emojija (🟩 🟨 🟥 💥) bez ijednog pitanja ili odgovora.

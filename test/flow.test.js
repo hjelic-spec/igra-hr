@@ -83,7 +83,7 @@ test('savršen brzi uspon: ulog se zarađuje svaka 3 brza točna i odmah troši'
   assert.equal((await c('run/next', { q: 0 })).status, 409);
 });
 
-test('ulog se ne zarađuje sporim ili krivim odgovorom; čuva se najviše jedan', async () => {
+test('ulog se ne zarađuje sporim ili krivim odgovorom; ulozi se skupljaju', async () => {
   const c = await player('spori');
   let run = (await c('run/start', {})).body.run;
   for (let i = 0; i < 3; i++) {                    // 3 točna, ali sporija od 3 s
@@ -95,8 +95,8 @@ test('ulog se ne zarađuje sporim ili krivim odgovorom; čuva se najviše jedan'
   assert.equal(run.fastStreak, 2);
   run = (await play(c, run, { right: false })).run;                // greška ruši niz
   assert.equal(run.fastStreak, 0); assert.equal(run.doublesLeft, 0);
-  for (let i = 0; i < 6; i++) run = (await play(c, run)).run;      // 6 brzih: zarađen 1, drugi se ne gomila
-  assert.equal(run.doublesLeft, 1); assert.equal(run.fastStreak, 0);
+  for (let i = 0; i < 7; i++) run = (await play(c, run)).run;      // 7 brzih: 2 uloga, niz krenuo ispočetka
+  assert.equal(run.doublesLeft, 2); assert.equal(run.fastStreak, 1);
 });
 
 test('kriv odgovor oduzima bodove pitanja; druga greška završava igru s tadašnjim bodovima', async () => {

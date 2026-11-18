@@ -17,8 +17,8 @@
     speedBonusShare: 0.5,         // najviše +50 % bodova pitanja za brz odgovor
     // kriv odgovor (ili istek vremena) oduzima bodove pitanja; uz "Dupli ili ništa" dvostruko. Rezultat ne ide ispod 0.
     // "Dupli ili ništa" se zarađuje: 3 točna odgovora zaredom, svaki unutar 3 s od prikaza pitanja (mjeri server).
-    // Igrač može čuvati najviše 1 zarađeni ulog; kriv ili spor odgovor ruši brzi niz.
-    earnDouble: { streak: 3, withinMs: 3000, maxHeld: 1 },
+    // Svaka 3 takva odgovora donose još jedan ulog (skupljaju se); kriv ili spor odgovor ruši brzi niz.
+    earnDouble: { streak: 3, withinMs: 3000 },
     streakBonusPerDay: 5,         // +5 bodova po uzastopnom danu nakon prvog
     streakBonusMax: 50,
   };
@@ -71,7 +71,7 @@
       run.fastStreak = (run.fastStreak || 0) + 1;
       if (run.fastStreak >= E.streak) {
         run.fastStreak = 0;
-        if (run.doublesLeft < E.maxHeld) { run.doublesLeft++; earned = true; }
+        run.doublesLeft++; earned = true;
       }
     } else run.fastStreak = 0;
     run.answers.push({ c: correct, d: run.doubled });
