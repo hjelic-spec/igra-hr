@@ -23,6 +23,8 @@
     // Rezerva vremena: točan odgovor unutar 5 s sprema +2 s (najviše 6 s). Kad osnovnih 10 s istekne,
     // sat automatski troši rezervu. Potrošeno se oduzima; server računa rok kao 10 s + rezerva u trenutku prikaza.
     timeBank: { fastMs: 5000, earnMs: 2000, maxMs: 6000 },
+    attemptsPerDay: 3,            // 3 piramide dnevno, svaka s drugim pitanjima (iste za sve igrače)
+    dailyScore: 'best',           // što ide na ljestvicu: 'best' (najbolja od tri), 'sum' (zbroj) ili 'first' (prva)
     streakBonusPerDay: 5,         // +5 bodova po uzastopnom danu nakon prvog
     streakBonusMax: 50,
   };

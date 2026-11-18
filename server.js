@@ -34,16 +34,34 @@ CREATE TABLE IF NOT EXISTS runs(
   base_score INTEGER NOT NULL DEFAULT 0, speed_bonus INTEGER NOT NULL DEFAULT 0, streak_bonus INTEGER NOT NULL DEFAULT 0,
   score INTEGER NOT NULL DEFAULT 0, max_level INTEGER NOT NULL DEFAULT 0, correct_count INTEGER NOT NULL DEFAULT 0,
   served_at INTEGER, started_at INTEGER NOT NULL, finished_at INTEGER, total_ms INTEGER NOT NULL DEFAULT 0,
-  state TEXT, UNIQUE(user_id, date));
+  state TEXT, attempt INTEGER NOT NULL DEFAULT 1, UNIQUE(user_id, date, attempt));
 CREATE TABLE IF NOT EXISTS answers(
   run_id INTEGER NOT NULL REFERENCES runs(id), q_index INTEGER NOT NULL, question_id INTEGER NOT NULL,
   chosen INTEGER, correct INTEGER NOT NULL, ms INTEGER NOT NULL, PRIMARY KEY(run_id, q_index));
-CREATE INDEX IF NOT EXISTS runs_date ON runs(date, score DESC);
 `);
 // nadogradnja baze iz prve verzije prototipa
 const cols = t => db.prepare(`PRAGMA table_info(${t})`).all().map(c => c.name);
 if (!cols('runs').includes('state')) db.exec('ALTER TABLE runs ADD COLUMN state TEXT');
 if (!cols('answers').includes('doubled')) db.exec('ALTER TABLE answers ADD COLUMN doubled INTEGER NOT NULL DEFAULT 0');
+// 3 piramide dnevno: stara tablica imala je UNIQUE(user_id, date), pa je prepisujemo s brojem pokušaja
+if (!cols('runs').includes('attempt')) {
+  const sql = db.prepare("SELECT sql FROM sqlite_master WHERE name='runs'").get().sql
+    .replace('state TEXT, UNIQUE(user_id, date))', 'state TEXT, attempt INTEGER NOT NULL DEFAULT 1, UNIQUE(user_id, date, attempt))')
+    .replace(/CREATE TABLE (IF NOT EXISTS )?runs/, 'CREATE TABLE runs_new');
+  if (!sql.includes('runs_new') || !sql.includes('attempt')) throw new Error('Neočekivana shema tablice runs');
+  db.exec('PRAGMA foreign_keys = OFF');
+  db.exec('BEGIN');
+  try {
+    const c = cols('runs').join(',');
+    db.exec(sql);
+    db.exec(`INSERT INTO runs_new(${c}) SELECT ${c} FROM runs`);
+    db.exec('DROP TABLE runs');
+    db.exec('ALTER TABLE runs_new RENAME TO runs');
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; }
+  db.exec('PRAGMA foreign_keys = ON');
+}
+db.exec('CREATE INDEX IF NOT EXISTS runs_date ON runs(date, score DESC)');
 
 // Učitaj početna pitanja (točan je prvi; spremamo opcije u stalnom izmiješanom redoslijedu)
 {
@@ -68,8 +86,11 @@ const today = () => fmt.format(new Date());
 function addDays(dateStr, n) { const d = new Date(dateStr + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
 function weekStart(dateStr) { const d = new Date(dateStr + 'T12:00:00Z'); const dow = (d.getUTCDay() + 6) % 7; return addDays(dateStr, -dow); }
 
-// ---------- Dnevna piramida: ista za sve igrače ----------
-function getDaily(date) {
+// ---------- Dnevne piramide: iste za sve igrače (1., 2. i 3. piramida dana imaju različita pitanja) ----------
+const dailyKey = (date, attempt = 1) => attempt > 1 ? `${date}#${attempt}` : date;
+function getDaily(date, attempt = 1) {
+  if (attempt > 1) getDaily(date, attempt - 1);    // prethodni kompleti se biraju prvi, pa ovaj uzima manje korištena pitanja
+  date = dailyKey(date, attempt);
   const row = db.prepare('SELECT question_ids FROM daily WHERE date=?').get(date);
   if (row) return JSON.parse(row.question_ids);
   const ids = [];
@@ -117,7 +138,8 @@ function rateLimited(key) {
 
 // ---------- Logika igre ----------
 // Stanje igre živi u runs.state (JSON, oblik iz game.js); stupci score/status/max_level služe ljestvicama.
-const loadRun = (userId, date) => db.prepare('SELECT * FROM runs WHERE user_id=? AND date=?').get(userId, date);
+// trenutna (posljednja započeta) piramida dana
+const loadRun = (userId, date) => db.prepare('SELECT * FROM runs WHERE user_id=? AND date=? ORDER BY attempt DESC LIMIT 1').get(userId, date);
 function stateOf(row) { return row.state ? JSON.parse(row.state) : Game.newRun(); }
 function saveRun(row, st) {
   db.prepare(`UPDATE runs SET state=?, status=?, q_index=?, lives=?, base_score=?, speed_bonus=?, streak_bonus=?, score=?,
@@ -127,12 +149,15 @@ function saveRun(row, st) {
       st.status === 'finished' ? Date.now() : null, row.id);
 }
 function questionAt(row, st) {
-  const q = db.prepare('SELECT * FROM questions WHERE id=?').get(getDaily(row.date)[st.q]);
+  const q = db.prepare('SELECT * FROM questions WHERE id=?').get(getDaily(row.date, row.attempt)[st.q]);
   return { ...q, options: JSON.parse(q.options) };
 }
 function runView(row) {
   const st = stateOf(row);
-  return Game.view(st, st.status === 'question' ? questionAt(row, st) : null, Date.now());
+  const v = Game.view(st, st.status === 'question' ? questionAt(row, st) : null, Date.now());
+  v.attempt = row.attempt; v.attempts = RULES.attemptsPerDay;
+  v.dayScore = dayScore(row.user_id, row.date);
+  return v;
 }
 function streakOf(user, date) {
   return user.last_played === date || user.last_played === addDays(date, -1) ? user.streak : 0;
@@ -192,15 +217,24 @@ function answer(user, body) {
   return [200, { result, run: runView(loadRun(user.id, date)) }];
 }
 
+// Rezultat igrača za jedan dan iz njegovih piramida (RULES.dailyScore): najbolja, zbroj ili prva
+const DAY_AGG = { best: 'MAX(score)', sum: 'SUM(score)', first: 'MAX(CASE WHEN attempt=1 THEN score END)' }[RULES.dailyScore] || 'MAX(score)';
+const DAYS = `SELECT user_id, date, ${DAY_AGG} score, MAX(max_level) max_level, MAX(correct_count) correct_count,
+  MIN(total_ms) ms, COUNT(*) attempts FROM runs WHERE status='finished' GROUP BY user_id, date`;
+function dayScore(userId, date) {
+  const r = db.prepare(`SELECT * FROM (${DAYS}) WHERE user_id=? AND date=?`).get(userId, date);
+  return r ? r.score : null;
+}
+
 function leaderboard(period) {
   const d = today();
   let where = 'r.date = ?', args = [d];
   if (period === 'weekly') { where = 'r.date >= ? AND r.date <= ?'; args = [weekStart(d), d]; }
   if (period === 'alltime') { where = '1=1'; args = []; }
   return db.prepare(`
-    SELECT u.username, SUM(r.score) score, MAX(r.max_level) max_level, COUNT(*) games, SUM(r.total_ms) ms
-    FROM runs r JOIN users u ON u.id=r.user_id
-    WHERE r.status='finished' AND ${where}
+    SELECT u.username, SUM(r.score) score, MAX(r.max_level) max_level, COUNT(*) games, SUM(r.ms) ms
+    FROM (${DAYS}) r JOIN users u ON u.id=r.user_id
+    WHERE r.score IS NOT NULL AND ${where}
     GROUP BY u.id ORDER BY score DESC, ms ASC LIMIT 50`).all(...args);
 }
 
@@ -210,8 +244,9 @@ function profile(username) {
   const stats = db.prepare(`SELECT COUNT(*) games, COALESCE(MAX(score),0) best_score, COALESCE(MAX(max_level),0) max_level,
     COALESCE(SUM(score),0) total, COALESCE(SUM(max_level=5),0) summits
     FROM runs WHERE user_id=? AND status='finished'`).get(u.id);
-  const recent = db.prepare(`SELECT date, score, max_level, correct_count FROM runs
-    WHERE user_id=? AND status='finished' ORDER BY date DESC LIMIT 14`).all(u.id);
+  stats.total = db.prepare(`SELECT COALESCE(SUM(score),0) t FROM (${DAYS}) WHERE user_id=?`).get(u.id).t;   // kao na ljestvici
+  const recent = db.prepare(`SELECT date, score, max_level, correct_count, attempts FROM (${DAYS})
+    WHERE user_id=? AND score IS NOT NULL ORDER BY date DESC LIMIT 14`).all(u.id);
   // niz se prekida ako igrač nije igrao jučer ni danas
   const d = today();
   const streak = (u.last_played === d || u.last_played === addDays(d, -1)) ? u.streak : 0;
@@ -288,11 +323,17 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { username: user.username, date, streak: streakOf(player, date), run: row ? runView(row) : null });
     }
     if (p === '/api/run/start' && req.method === 'POST') {
-      const date = today(); getDaily(date);
-      const now = Date.now();
-      // jedna igra dnevno: ako već postoji, vraća se njeno stanje
-      db.prepare(`INSERT OR IGNORE INTO runs(user_id, date, status, lives, started_at, state) VALUES(?,?,?,?,?,?)`)
-        .run(user.id, date, 'playing', RULES.lives, now, JSON.stringify(Game.newRun()));
+      const date = today(), last = loadRun(user.id, date);
+      // nedovršena piramida se nastavlja; nova se otvara samo na izričit zahtjev ({ again: true }) nakon završene
+      let attempt = 1;
+      if (last) {
+        if (last.status !== 'finished' || body.again !== true) return send(res, 200, { run: runView(last) });
+        if (last.attempt >= RULES.attemptsPerDay) return send(res, 409, { error: `Danas si odigrao sve ${RULES.attemptsPerDay} piramide.`, run: runView(last) });
+        attempt = last.attempt + 1;
+      }
+      getDaily(date, attempt);
+      db.prepare(`INSERT OR IGNORE INTO runs(user_id, date, attempt, status, lives, started_at, state) VALUES(?,?,?,?,?,?,?)`)
+        .run(user.id, date, attempt, 'playing', RULES.lives, Date.now(), JSON.stringify(Game.newRun()));
       return send(res, 200, { run: runView(loadRun(user.id, date)) });
     }
     if (p === '/api/run/next' && req.method === 'POST') { const [s, d] = next(player, body); return send(res, s, d); }

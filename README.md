@@ -1,6 +1,6 @@
 # Dnevna piramida – prototip
 
-Dnevni kviz-izazov: svi registrirani igrači jednom dnevno dobivaju **istu piramidu od 15 pitanja**
+Dnevni kviz-izazov: svi registrirani igrači svaki dan dobivaju **iste tri piramide od 15 pitanja**
 (5 lakih → 4 → 3 → 2 → 1 najteže). Bodovi rastu s razinom (10, 20, 40, 80, 160).
 
 ## Pokretanje
@@ -24,6 +24,7 @@ Pravila su u jednom modulu koji koriste i server i probna verzija u pregledniku,
   pitanja: točno donosi dvostruko, krivo oduzima dvostruko. Pragovi su u `RULES.earnDouble`.
 - **Rezerva vremena**: točan odgovor unutar 5 s sprema +2 s, najviše 6 s. Kad osnovnih 10 s istekne, sat sam troši rezervu;
   potrošeno se oduzima. Server računa rok kao 10 s + rezerva u trenutku prikaza pitanja. Brojevi su u `RULES.timeBank`.
+- **3 piramide dnevno**: svaka s drugim pitanjima (1., 2. i 3. piramida dana iste su za sve igrače). Na ljestvicu ide najbolja od tri (`RULES.dailyScore`).
 - **Niz dana**: +5 bodova po uzastopnom danu, najviše +50; u zaglavlju se prikazuje 🔥.
 - **Dijeljenje**: na kraju se kopira piramida od emojija (🟩 🟨 🟥 💥) bez ijednog pitanja ili odgovora.
 - Novi dan počinje u ponoć po hrvatskom vremenu (Europe/Zagreb); kraj igre prikazuje odbrojavanje.
@@ -32,7 +33,7 @@ Pravila su u jednom modulu koji koriste i server i probna verzija u pregledniku,
 ## Zaštita od varanja (što prototip radi)
 - Točan odgovor nikad ne ide pregledniku prije odgovora; provjera je na serveru.
 - Server šalje jedno po jedno pitanje i sam mjeri vrijeme (osvježavanje stranice ne resetira sat).
-- Jedna igra po igraču po danu (ograničenje u bazi).
+- Najviše 3 piramide po igraču po danu (ograničenje u bazi: `UNIQUE(user_id, date, attempt)`); svaka ima druga pitanja, ista za sve igrače.
 - Lozinke: scrypt sa soli; sesija u HttpOnly kolačiću; ograničen broj pokušaja prijave.
 
 ## Što prototip NE rješava (poznata ograničenja)

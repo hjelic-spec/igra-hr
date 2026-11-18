@@ -19,8 +19,8 @@ function client() {
     return { status: r.status, body: await r.json() };
   };
 }
-const correctFor = idx => db.prepare('SELECT correct FROM questions WHERE id=?').get(getDaily(today())[idx]).correct;
-const wrongFor = idx => (correctFor(idx) + 1) % 4;
+const correctFor = (idx, attempt = 1) => db.prepare('SELECT correct FROM questions WHERE id=?').get(getDaily(today(), attempt)[idx]).correct;
+const wrongFor = (idx, attempt = 1) => (correctFor(idx, attempt) + 1) % 4;
 // pomakni vrijeme prikaza trenutnog pitanja unatrag (simulira sporiji odgovor)
 function delay(name, ms) {
   const row = db.prepare('SELECT r.* FROM runs r JOIN users u ON u.id=r.user_id WHERE u.username=?').get(name);
@@ -32,7 +32,7 @@ async function player(name) { const c = client(); await c('register', { username
 async function play(c, run, { right = true, double = false, choice } = {}) {
   const n = await c('run/next', { q: run.q, double });
   assert.equal(n.status, 200); assert.equal(n.body.run.status, 'question');
-  const a = await c('run/answer', { q: run.q, choice: choice !== undefined ? choice : right ? correctFor(run.q) : wrongFor(run.q) });
+  const a = await c('run/answer', { q: run.q, choice: choice !== undefined ? choice : right ? correctFor(run.q, run.attempt) : wrongFor(run.q, run.attempt) });
   assert.equal(a.status, 200);
   return a.body;
 }
@@ -216,4 +216,58 @@ test('rezerva vremena: brz točan odgovor sprema 2 s (najviše 6), sat je troši
   // bez dovoljno rezerve: istek vremena i rezerva je potrošena do kraja
   Game.serve(st, false, t); t += base + 2000 + RULES.graceMs + 1; const r2 = Game.answer(st, 0, 0, t);
   assert.ok(r2.timedOut); assert.equal(st.bankMs, 0);
+});
+
+test('3 piramide dnevno: različita pitanja, iste za sve; na ljestvicu ide najbolja', async () => {
+  const c = await player('trojka');
+  const scores = [];
+  let run = (await c('run/start', {})).body.run;
+  assert.equal(run.attempt, 1); assert.equal(run.attempts, RULES.attemptsPerDay);
+  for (let k = 1; k <= RULES.attemptsPerDay; k++) {
+    // 1. piramida: dvije greške odmah; 2.: cijela točno; 3.: 6 točnih pa dvije greške
+    const plan = k === 1 ? [false, false] : k === 2 ? Array(15).fill(true) : [...Array(6).fill(true), false, false];
+    for (const right of plan) run = (await play(c, run, { right })).run;
+    assert.equal(run.status, 'finished'); scores.push(run.score);
+    assert.equal(run.dayScore, Math.max(...scores));
+    // bez izričitog zahtjeva start vraća završenu piramidu, ne otvara novu
+    assert.equal((await c('run/start', {})).body.run.attempt, k);
+    if (k < RULES.attemptsPerDay) { run = (await c('run/start', { again: true })).body.run; assert.equal(run.attempt, k + 1); assert.equal(run.status, 'ready'); }
+  }
+  const no = await c('run/start', { again: true });
+  assert.equal(no.status, 409); assert.equal(no.body.run.attempt, RULES.attemptsPerDay);
+  // kompleti se ne preklapaju i isti su za sve igrače
+  const sets = [1, 2, 3].map(k => getDaily(today(), k));
+  assert.equal(new Set(sets.flat()).size, 3 * Game.TOTAL);                 // nijedno pitanje se ne ponavlja unutar dana
+  const row = (await c('leaderboard?period=daily')).body.rows.find(r => r.username === 'trojka');
+  assert.equal(row.score, Math.max(...scores)); assert.equal(row.games, 1);
+  const pr = (await c('profile/trojka')).body;
+  assert.equal(pr.games, 3); assert.equal(pr.recent[0].attempts, 3); assert.equal(pr.recent[0].score, Math.max(...scores));
+});
+
+test('nadogradnja stare baze (jedna igra dnevno) zadržava igre i dopušta nove pokušaje', () => {
+  const { DatabaseSync } = require('node:sqlite');
+  const { execFileSync } = require('node:child_process');
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'kviz-old-')), 'old.db');
+  const old = new DatabaseSync(file);
+  old.exec(`CREATE TABLE users(id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL COLLATE NOCASE, pass_hash TEXT NOT NULL, salt TEXT NOT NULL, created_at TEXT NOT NULL, streak INTEGER NOT NULL DEFAULT 0, best_streak INTEGER NOT NULL DEFAULT 0, last_played TEXT);
+  CREATE TABLE runs(
+  id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id), date TEXT NOT NULL,
+  status TEXT NOT NULL, q_index INTEGER NOT NULL DEFAULT 0, lives INTEGER NOT NULL,
+  base_score INTEGER NOT NULL DEFAULT 0, speed_bonus INTEGER NOT NULL DEFAULT 0, streak_bonus INTEGER NOT NULL DEFAULT 0,
+  score INTEGER NOT NULL DEFAULT 0, max_level INTEGER NOT NULL DEFAULT 0, correct_count INTEGER NOT NULL DEFAULT 0,
+  served_at INTEGER, started_at INTEGER NOT NULL, finished_at INTEGER, total_ms INTEGER NOT NULL DEFAULT 0,
+  state TEXT, UNIQUE(user_id, date));
+  CREATE TABLE answers(run_id INTEGER NOT NULL REFERENCES runs(id), q_index INTEGER NOT NULL, question_id INTEGER NOT NULL, chosen INTEGER, correct INTEGER NOT NULL, ms INTEGER NOT NULL, PRIMARY KEY(run_id, q_index));
+  INSERT INTO users VALUES(1,'stara','x','y','2026-01-01',0,0,NULL);
+  INSERT INTO runs(id,user_id,date,status,lives,score,started_at) VALUES(7,1,'2026-11-01','finished',2,123,0);
+  INSERT INTO answers VALUES(7,0,1,0,1,900);`);
+  old.close();
+  execFileSync(process.execPath, ['-e', "require('./server.js').db.close()"], { cwd: path.join(__dirname, '..'), env: { ...process.env, DB_FILE: file } });
+  const db2 = new DatabaseSync(file);
+  const r = db2.prepare('SELECT id, score, attempt FROM runs').get();
+  assert.deepEqual({ ...r }, { id: 7, score: 123, attempt: 1 });
+  db2.exec("INSERT INTO runs(user_id,date,attempt,status,lives,started_at) VALUES(1,'2026-11-01',2,'playing',2,0)");
+  assert.equal(db2.prepare('SELECT COUNT(*) n FROM answers WHERE run_id=7').get().n, 1);
+  assert.equal(db2.prepare('PRAGMA foreign_key_check').all().length, 0);
+  db2.close();
 });
