@@ -19,9 +19,10 @@ Pravila su u jednom modulu koji koriste i server i probna verzija u pregledniku,
 - 20 s po pitanju; brzina donosi do +50 % bodova pitanja.
 - Kriv odgovor ili istek vremena oduzima bodove tog pitanja.
 - 2 života: druga greška završava uspon, a konačni rezultat su bodovi u tom trenutku. Rezultat ne ide ispod 0.
-- **Dupli ili ništa se zarađuje**: 3 točna odgovora zaredom, svaki unutar 3 s od prikaza pitanja (mjeri server),
-  donose dupli ulog, svaka sljedeća trojka još jedan (skupljaju se). Kriv ili sporiji odgovor ruši brzi niz. Ulog se bira prije prikaza
-  pitanja: točno donosi dvostruko, krivo oduzima dvostruko. Pragovi su u `RULES.earnDouble`.
+- **Ulog se zarađuje**: 3 točna odgovora zaredom, svaki unutar 3 s od prikaza pitanja (mjeri server),
+  donose ulog. Multiplikator raste sa svakim zarađenim ulogom: prvi ×2, drugi ×3, treći ×4, četvrti ×5 i tako dalje.
+  Ulozi se skupljaju i troše redom kojim su zarađeni. Kriv ili sporiji odgovor ruši brzi niz. Ulog se bira prije prikaza
+  pitanja: točno donosi bodove pitanja puta multiplikator, krivo ih toliko oduzima. Pragovi su u `RULES.earnDouble`.
 - **Niz dana**: +5 bodova po uzastopnom danu, najviše +50; u zaglavlju se prikazuje 🔥.
 - **Dijeljenje**: na kraju se kopira piramida od emojija (🟩 🟨 🟥 💥) bez ijednog pitanja ili odgovora.
 - Novi dan počinje u ponoć po hrvatskom vremenu (Europe/Zagreb); kraj igre prikazuje odbrojavanje.

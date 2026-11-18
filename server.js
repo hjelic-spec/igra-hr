@@ -162,7 +162,7 @@ function tx(fn) {
   try { const r = fn(); db.exec('COMMIT'); return r; } catch (e) { db.exec('ROLLBACK'); throw e; }
 }
 
-// Sljedeće pitanje: igrač prije prikaza bira hoće li igrati "Dupli ili ništa"
+// Sljedeće pitanje: igrač prije prikaza bira hoće li uložiti najstariji zarađeni ulog (×2, ×3, ...)
 function next(user, body) {
   const date = today(); const row = loadRun(user.id, date);
   if (!row || row.status !== 'playing') return [409, { error: 'Nema aktivne igre.' }];
@@ -185,7 +185,7 @@ function answer(user, body) {
   const result = tx(() => {
     const r = Game.answer(st, chosen, q.correct, now);
     db.prepare('INSERT INTO answers(run_id, q_index, question_id, chosen, correct, ms, doubled) VALUES(?,?,?,?,?,?,?)')
-      .run(row.id, qIndex, q.id, chosen, r.correct ? 1 : 0, ms, r.doubled ? 1 : 0);
+      .run(row.id, qIndex, q.id, chosen, r.correct ? 1 : 0, ms, r.mult);   // stupac doubled čuva multiplikator (1 = bez uloga)
     if (st.status === 'finished') finishRun(row, st, user, date); else saveRun(row, st);
     return r;
   });
