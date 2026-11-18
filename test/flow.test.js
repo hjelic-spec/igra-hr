@@ -21,6 +21,12 @@ function client() {
 }
 const correctFor = idx => db.prepare('SELECT correct FROM questions WHERE id=?').get(getDaily(today())[idx]).correct;
 const wrongFor = idx => (correctFor(idx) + 1) % 4;
+// pomakni vrijeme prikaza trenutnog pitanja unatrag (simulira sporiji odgovor)
+function delay(name, ms) {
+  const row = db.prepare('SELECT r.* FROM runs r JOIN users u ON u.id=r.user_id WHERE u.username=?').get(name);
+  const st = JSON.parse(row.state); st.servedAt -= ms;
+  db.prepare('UPDATE runs SET state=? WHERE id=?').run(JSON.stringify(st), row.id);
+}
 async function player(name) { const c = client(); await c('register', { username: name, password: 'lozinka123' }); return c; }
 // jedan korak: (ulog po želji) → prikaz pitanja → odgovor
 async function play(c, run, { right = true, double = false, choice } = {}) {
@@ -53,27 +59,44 @@ test('pitanje se ne prikazuje prije "next" i ne otkriva točan odgovor', async (
   assert.ok(!JSON.stringify(n.body).includes('"correct"'));
   // ponovljeni "next" ne resetira sat i ne troši ulog
   const again = await c('run/next', { q: 0, double: true });
-  assert.equal(again.body.run.doublesLeft, RULES.doubles);
+  assert.equal(again.body.run.doubled, false);           // nema zarađenog uloga, pa ga ne može ni uzeti
 });
 
-test('savršen uspon s tri dupla uloga', async () => {
+test('savršen brzi uspon: ulog se zarađuje svaka 3 brza točna i odmah troši', async () => {
   const c = await player('marko');
-  let run = (await c('run/start', {})).body.run, doubles = 0;
+  let run = (await c('run/start', {})).body.run;
+  const used = [];
   while (run.status !== 'finished') {
-    const want = run.q >= 12;                      // ulog na zadnja tri pitanja
+    const want = run.doublesLeft > 0;
     const r = await play(c, run, { double: want });
-    assert.ok(r.result.correct);
-    if (want) { doubles++; assert.ok(r.result.doubled); }
+    assert.ok(r.result.correct); assert.ok(r.result.ms <= 3000);
+    if (want) { used.push(run.q); assert.ok(r.result.doubled); }
     run = r.run;
   }
+  assert.deepEqual(used, [3, 6, 9, 12]);          // zarađen nakon 3., 6., 9. i 12. pitanja
   const max = RULES.levels.reduce((s, l) => s + l.count * l.points, 0);
-  assert.equal(doubles, 3);
-  assert.equal(run.doublesLeft, 0);
-  assert.equal(run.base, max + 80 + 80 + 160);   // pitanja 13–15 (80, 80, 160) vrijede dvostruko
+  assert.equal(run.base, max + 10 + 20 + 40 + 80);
+  assert.equal(run.doublesLeft, 1);               // zarađen nakon 15., ali igra je gotova
   assert.equal(run.score, run.base + run.speedBonus);
   assert.equal(run.maxLevel, 5);
   assert.equal((await c('run/start', {})).body.run.status, 'finished');
   assert.equal((await c('run/next', { q: 0 })).status, 409);
+});
+
+test('ulog se ne zarađuje sporim ili krivim odgovorom; čuva se najviše jedan', async () => {
+  const c = await player('spori');
+  let run = (await c('run/start', {})).body.run;
+  for (let i = 0; i < 3; i++) {                    // 3 točna, ali sporija od 3 s
+    await c('run/next', { q: run.q }); delay('spori', 3500);
+    run = (await c('run/answer', { q: run.q, choice: correctFor(run.q) })).body.run;
+  }
+  assert.equal(run.doublesLeft, 0); assert.equal(run.fastStreak, 0);
+  run = (await play(c, run)).run; run = (await play(c, run)).run;   // 2 brza
+  assert.equal(run.fastStreak, 2);
+  run = (await play(c, run, { right: false })).run;                // greška ruši niz
+  assert.equal(run.fastStreak, 0); assert.equal(run.doublesLeft, 0);
+  for (let i = 0; i < 6; i++) run = (await play(c, run)).run;      // 6 brzih: zarađen 1, drugi se ne gomila
+  assert.equal(run.doublesLeft, 1); assert.equal(run.fastStreak, 0);
 });
 
 test('kriv odgovor oduzima bodove pitanja; druga greška završava igru s tadašnjim bodovima', async () => {
@@ -92,19 +115,23 @@ test('kriv odgovor oduzima bodove pitanja; druga greška završava igru s tadaš
   assert.equal((await c('run/stop', {})).status, 404);           // nema više stajanja
 });
 
-test('dupli ili ništa: krivo oduzima dvostruko; rezultat ne ide ispod nule', async () => {
+test('dupli ili ništa: točno dvostruko, krivo oduzima dvostruko; rezultat ne ide ispod nule', async () => {
   const c = await player('ulog');
   let run = (await c('run/start', {})).body.run;
-  let r = await play(c, run, { right: false, double: true });   // 1. pitanje krivo uz ulog: s 0 ostaje 0
-  assert.equal(r.result.gained, 0); assert.equal(r.run.current, 0); assert.equal(r.run.doublesLeft, 2);
+  for (let i = 0; i < 3; i++) run = (await play(c, run)).run;    // zaradi ulog
+  assert.equal(run.doublesLeft, 1);
+  let r = await play(c, run, { right: true, double: true });     // 4. pitanje (10) ×2
+  assert.equal(r.result.gained, 20); assert.equal(r.run.doublesLeft, 0);
   run = r.run;
-  for (let i = 1; i < 6; i++) run = (await play(c, run)).run;    // 4 × 10 + 20
-  r = await play(c, run, { right: true, double: true });         // 7. pitanje (20) ×2
-  assert.equal(r.result.gained, 40);
-  const before = r.run.current;
-  r = await play(c, r.run, { right: false, double: true });      // 8. pitanje krivo uz ulog: −40, druga greška
-  assert.equal(r.result.gained, -40);
-  assert.equal(r.run.status, 'finished'); assert.equal(r.run.score, before - 40);
+  for (let i = 0; i < 3; i++) run = (await play(c, run)).run;    // 5.–7. brzo: novi ulog
+  assert.equal(run.doublesLeft, 1);
+  const before = run.current;
+  r = await play(c, run, { right: false, double: true });        // 8. pitanje (20) krivo uz ulog: −40
+  assert.equal(r.result.gained, -40); assert.equal(r.run.current, before - 40);
+  // donja granica 0, provjereno na samim pravilima
+  const st = Game.newRun(); st.doublesLeft = 1; Game.serve(st, true, 0);
+  const res = Game.answer(st, 9, 0, 100);
+  assert.equal(res.gained, 0); assert.equal(st.base + st.speed, 0);
 });
 
 test('istek vremena se računa na serveru', async () => {

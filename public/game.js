@@ -16,7 +16,9 @@
     lives: 2,                     // druga greška završava uspon; vrijede bodovi u tom trenutku
     speedBonusShare: 0.5,         // najviše +50 % bodova pitanja za brz odgovor
     // kriv odgovor (ili istek vremena) oduzima bodove pitanja; uz "Dupli ili ništa" dvostruko. Rezultat ne ide ispod 0.
-    doubles: 3,                   // "Dupli ili ništa" najviše 3 puta po igri
+    // "Dupli ili ništa" se zarađuje: 3 točna odgovora zaredom, svaki unutar 3 s od prikaza pitanja (mjeri server).
+    // Igrač može čuvati najviše 1 zarađeni ulog; kriv ili spor odgovor ruši brzi niz.
+    earnDouble: { streak: 3, withinMs: 3000, maxHeld: 1 },
     streakBonusPerDay: 5,         // +5 bodova po uzastopnom danu nakon prvog
     streakBonusMax: 50,
   };
@@ -26,7 +28,7 @@
   // status: 'ready' (čeka sljedeće pitanje), 'question' (pitanje je prikazano, sat teče), 'finished'
   function newRun() {
     return { q: 0, status: 'ready', lives: RULES.lives, base: 0, speed: 0,
-      doublesLeft: RULES.doubles, doubled: false, servedAt: null, answers: [],
+      doublesLeft: 0, fastStreak: 0, doubled: false, servedAt: null, answers: [],
       maxLevel: 0, correctCount: 0, totalMs: 0, out: false, streakBonus: 0 };
   }
 
@@ -62,6 +64,16 @@
       // rezultat ne ide u minus
       if (current(run) < 0) { gained -= current(run); run.base = -run.speed; }
     }
+    // brzi niz za zarađivanje duplog uloga
+    const E = RULES.earnDouble;
+    let earned = false;
+    if (correct && ms <= E.withinMs) {
+      run.fastStreak = (run.fastStreak || 0) + 1;
+      if (run.fastStreak >= E.streak) {
+        run.fastStreak = 0;
+        if (run.doublesLeft < E.maxHeld) { run.doublesLeft++; earned = true; }
+      }
+    } else run.fastStreak = 0;
     run.answers.push({ c: correct, d: run.doubled });
     run.totalMs += Math.min(ms, limit);
     const wasDoubled = run.doubled;
@@ -75,14 +87,14 @@
     } else {
       run.q++; run.status = 'ready';
     }
-    return { correct, timedOut, correctChoice: correctIndex, gained, speedBonus: speed, doubled: wasDoubled, event };
+    return { correct, timedOut, correctChoice: correctIndex, gained, speedBonus: speed, doubled: wasDoubled, earned, ms, event };
   }
 
   // Što klijent smije vidjeti (bez točnih odgovora)
   function view(run, question, now) {
     const step = PLAN[Math.min(run.q, TOTAL - 1)];
     const v = { status: run.status, q: run.q, total: TOTAL, lives: run.lives, score: finalScore(run),
-      current: current(run), base: run.base, speedBonus: run.speed, doublesLeft: run.doublesLeft, doubled: run.doubled,
+      current: current(run), base: run.base, speedBonus: run.speed, doublesLeft: run.doublesLeft, fastStreak: run.fastStreak || 0, doubled: run.doubled,
       answers: run.answers.slice(), maxLevel: run.maxLevel, correctCount: run.correctCount,
       out: run.out, streakBonus: run.streakBonus || 0,
       next: { level: step.level, points: step.points } };
