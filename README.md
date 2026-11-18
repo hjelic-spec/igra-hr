@@ -22,7 +22,7 @@ Pravila su u jednom modulu koji koriste i server i probna verzija u pregledniku,
 - **Dupli ili ništa se zarađuje**: 3 točna odgovora zaredom, svaki unutar 3 s od prikaza pitanja (mjeri server),
   donose ulog ×2, svaka sljedeća trojka još jedan (skupljaju se). Kriv ili sporiji odgovor ruši brzi niz. Ulog se bira prije prikaza
   pitanja: točno donosi dvostruko, krivo oduzima dvostruko. Pragovi su u `RULES.earnDouble`.
-- **Rezerva vremena**: točan odgovor unutar 5 s sprema +2 s, najviše 10 s. Kad osnovnih 10 s istekne, sat sam troši rezervu;
+- **Rezerva vremena**: točan odgovor unutar 5 s sprema +2 s, najviše 6 s. Kad osnovnih 10 s istekne, sat sam troši rezervu;
   potrošeno se oduzima. Server računa rok kao 10 s + rezerva u trenutku prikaza pitanja. Brojevi su u `RULES.timeBank`.
 - **Niz dana**: +5 bodova po uzastopnom danu, najviše +50; u zaglavlju se prikazuje 🔥.
 - **Dijeljenje**: na kraju se kopira piramida od emojija (🟩 🟨 🟥 💥) bez ijednog pitanja ili odgovora.
