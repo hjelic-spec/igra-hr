@@ -10,24 +10,9 @@ const PORT = Number(process.env.PORT || 3000);
 const DB_FILE = process.env.DB_FILE || path.join(__dirname, 'kviz.db');
 const TZ = 'Europe/Zagreb';
 
-// ---------- Pravila igre (sve na jednom mjestu) ----------
-const RULES = {
-  // piramida: koliko pitanja po razini (dno → vrh) i koliko bodova nosi točan odgovor
-  levels: [
-    { level: 1, count: 5, points: 10 },
-    { level: 2, count: 4, points: 20 },
-    { level: 3, count: 3, points: 40 },
-    { level: 4, count: 2, points: 80 },
-    { level: 5, count: 1, points: 160 },
-  ],
-  secondsPerQuestion: 20,
-  graceMs: 1500,          // tolerancija za mrežno kašnjenje
-  lives: 2,               // 2 = jedna greška je dopuštena, druga završava igru
-  speedBonusShare: 0.5,   // najviše +50 % bodova pitanja za trenutni odgovor
-  streakBonusPerDay: 5,   // +5 bodova za svaki uzastopni dan nakon prvog
-  streakBonusMax: 50,
-};
-const PLAN = RULES.levels.flatMap(l => Array.from({ length: l.count }, () => l));
+// ---------- Pravila igre: zajednički modul (isti kod koristi i probna verzija u pregledniku) ----------
+const Game = require('./public/game.js');
+const { RULES } = Game;
 
 // ---------- Baza ----------
 const db = new DatabaseSync(DB_FILE);
@@ -49,12 +34,34 @@ CREATE TABLE IF NOT EXISTS runs(
   base_score INTEGER NOT NULL DEFAULT 0, speed_bonus INTEGER NOT NULL DEFAULT 0, streak_bonus INTEGER NOT NULL DEFAULT 0,
   score INTEGER NOT NULL DEFAULT 0, max_level INTEGER NOT NULL DEFAULT 0, correct_count INTEGER NOT NULL DEFAULT 0,
   served_at INTEGER, started_at INTEGER NOT NULL, finished_at INTEGER, total_ms INTEGER NOT NULL DEFAULT 0,
-  UNIQUE(user_id, date));
+  state TEXT, attempt INTEGER NOT NULL DEFAULT 1, UNIQUE(user_id, date, attempt));
 CREATE TABLE IF NOT EXISTS answers(
   run_id INTEGER NOT NULL REFERENCES runs(id), q_index INTEGER NOT NULL, question_id INTEGER NOT NULL,
   chosen INTEGER, correct INTEGER NOT NULL, ms INTEGER NOT NULL, PRIMARY KEY(run_id, q_index));
-CREATE INDEX IF NOT EXISTS runs_date ON runs(date, score DESC);
 `);
+// nadogradnja baze iz prve verzije prototipa
+const cols = t => db.prepare(`PRAGMA table_info(${t})`).all().map(c => c.name);
+if (!cols('runs').includes('state')) db.exec('ALTER TABLE runs ADD COLUMN state TEXT');
+if (!cols('answers').includes('doubled')) db.exec('ALTER TABLE answers ADD COLUMN doubled INTEGER NOT NULL DEFAULT 0');
+// 3 piramide dnevno: stara tablica imala je UNIQUE(user_id, date), pa je prepisujemo s brojem pokušaja
+if (!cols('runs').includes('attempt')) {
+  const sql = db.prepare("SELECT sql FROM sqlite_master WHERE name='runs'").get().sql
+    .replace('state TEXT, UNIQUE(user_id, date))', 'state TEXT, attempt INTEGER NOT NULL DEFAULT 1, UNIQUE(user_id, date, attempt))')
+    .replace(/CREATE TABLE (IF NOT EXISTS )?runs/, 'CREATE TABLE runs_new');
+  if (!sql.includes('runs_new') || !sql.includes('attempt')) throw new Error('Neočekivana shema tablice runs');
+  db.exec('PRAGMA foreign_keys = OFF');
+  db.exec('BEGIN');
+  try {
+    const c = cols('runs').join(',');
+    db.exec(sql);
+    db.exec(`INSERT INTO runs_new(${c}) SELECT ${c} FROM runs`);
+    db.exec('DROP TABLE runs');
+    db.exec('ALTER TABLE runs_new RENAME TO runs');
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; }
+  db.exec('PRAGMA foreign_keys = ON');
+}
+db.exec('CREATE INDEX IF NOT EXISTS runs_date ON runs(date, score DESC)');
 
 // Učitaj početna pitanja (točan je prvi; spremamo opcije u stalnom izmiješanom redoslijedu)
 {
@@ -79,8 +86,11 @@ const today = () => fmt.format(new Date());
 function addDays(dateStr, n) { const d = new Date(dateStr + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
 function weekStart(dateStr) { const d = new Date(dateStr + 'T12:00:00Z'); const dow = (d.getUTCDay() + 6) % 7; return addDays(dateStr, -dow); }
 
-// ---------- Dnevna piramida: ista za sve igrače ----------
-function getDaily(date) {
+// ---------- Dnevne piramide: iste za sve igrače (1., 2. i 3. piramida dana imaju različita pitanja) ----------
+const dailyKey = (date, attempt = 1) => attempt > 1 ? `${date}#${attempt}` : date;
+function getDaily(date, attempt = 1) {
+  if (attempt > 1) getDaily(date, attempt - 1);    // prethodni kompleti se biraju prvi, pa ovaj uzima manje korištena pitanja
+  date = dailyKey(date, attempt);
   const row = db.prepare('SELECT question_ids FROM daily WHERE date=?').get(date);
   if (row) return JSON.parse(row.question_ids);
   const ids = [];
@@ -127,86 +137,93 @@ function rateLimited(key) {
 }
 
 // ---------- Logika igre ----------
-function publicQuestion(run, ids) {
-  const q = db.prepare('SELECT id, text, options FROM questions WHERE id=?').get(ids[run.q_index]);
-  const step = PLAN[run.q_index];
-  const elapsed = Date.now() - run.served_at;
-  return {
-    index: run.q_index, total: PLAN.length, level: step.level, points: step.points,
-    text: q.text, options: JSON.parse(q.options),
-    secondsLeft: Math.max(0, Math.ceil((RULES.secondsPerQuestion * 1000 - elapsed) / 1000)),
-  };
+// Stanje igre živi u runs.state (JSON, oblik iz game.js); stupci score/status/max_level služe ljestvicama.
+// trenutna (posljednja započeta) piramida dana
+const loadRun = (userId, date) => db.prepare('SELECT * FROM runs WHERE user_id=? AND date=? ORDER BY attempt DESC LIMIT 1').get(userId, date);
+function stateOf(row) { return row.state ? JSON.parse(row.state) : Game.newRun(); }
+function saveRun(row, st) {
+  db.prepare(`UPDATE runs SET state=?, status=?, q_index=?, lives=?, base_score=?, speed_bonus=?, streak_bonus=?, score=?,
+    max_level=?, correct_count=?, served_at=?, total_ms=?, finished_at=? WHERE id=?`)
+    .run(JSON.stringify(st), st.status === 'finished' ? 'finished' : 'playing', st.q, st.lives, st.base, st.speed,
+      st.streakBonus || 0, Game.finalScore(st), st.maxLevel, st.correctCount, st.servedAt, st.totalMs,
+      st.status === 'finished' ? Date.now() : null, row.id);
 }
-function runState(run, ids) {
-  const s = {
-    status: run.status, lives: run.lives, score: run.score, baseScore: run.base_score,
-    speedBonus: run.speed_bonus, streakBonus: run.streak_bonus, maxLevel: run.max_level,
-    correctCount: run.correct_count, qIndex: run.q_index,
-    answers: db.prepare('SELECT correct FROM answers WHERE run_id=? ORDER BY q_index').all(run.id).map(a => a.correct === 1),
-  };
-  if (run.status === 'playing') s.question = publicQuestion(run, ids);
-  return s;
+function questionAt(row, st) {
+  const q = db.prepare('SELECT * FROM questions WHERE id=?').get(getDaily(row.date, row.attempt)[st.q]);
+  return { ...q, options: JSON.parse(q.options) };
 }
-function finishRun(run, user, date) {
+function runView(row) {
+  const st = stateOf(row);
+  const v = Game.view(st, st.status === 'question' ? questionAt(row, st) : null, Date.now());
+  v.attempt = row.attempt; v.attempts = RULES.attemptsPerDay;
+  v.dayScore = dayScore(row.user_id, row.date);
+  return v;
+}
+function streakOf(user, date) {
+  return user.last_played === date || user.last_played === addDays(date, -1) ? user.streak : 0;
+}
+// Zatvaranje igre: niz dana i bonus za niz
+function finishRun(row, st, user, date) {
   const yesterday = addDays(date, -1);
   const streak = user.last_played === yesterday ? user.streak + 1 : (user.last_played === date ? user.streak : 1);
-  const streakBonus = Math.min(RULES.streakBonusMax, (streak - 1) * RULES.streakBonusPerDay);
-  const score = run.base_score + run.speed_bonus + streakBonus;
-  db.prepare('UPDATE runs SET status=?, streak_bonus=?, score=?, finished_at=?, served_at=NULL WHERE id=?')
-    .run('finished', streakBonus, score, Date.now(), run.id);
-  db.prepare('UPDATE users SET streak=?, best_streak=MAX(best_streak, ?), last_played=? WHERE id=?')
-    .run(streak, streak, date, user.id);
+  st.status = 'finished'; st.servedAt = null;
+  st.streakBonus = Game.streakBonusFor(streak);
+  saveRun(row, st);
+  db.prepare('UPDATE users SET streak=?, best_streak=MAX(best_streak, ?), last_played=? WHERE id=?').run(streak, streak, date, user.id);
 }
 
-// Igra iz prethodnog dana koja nije dovršena (zatvoren preglednik) zaključuje se s dosad osvojenim bodovima.
+// Igra iz prethodnog dana koja nije dovršena (zatvoren preglednik) zaključuje se s bodovima koje je igrač imao.
 function closeStaleRuns(user) {
   const stale = db.prepare("SELECT * FROM runs WHERE user_id=? AND status='playing' AND date<? ORDER BY date").all(user.id, today());
-  for (const run of stale) {
-    finishRun(run, db.prepare('SELECT * FROM users WHERE id=?').get(user.id), run.date);
+  for (const row of stale) {
+    const st = stateOf(row);
+    finishRun(row, st, db.prepare('SELECT * FROM users WHERE id=?').get(user.id), row.date);
   }
   return stale.length ? db.prepare('SELECT * FROM users WHERE id=?').get(user.id) : user;
 }
 
-function answer(user, body) {
-  const date = today();
-  const run = db.prepare('SELECT * FROM runs WHERE user_id=? AND date=?').get(user.id, date);
-  if (!run || run.status !== 'playing') return [409, { error: 'Nema aktivne igre.' }];
-  if (body.index !== run.q_index) return [409, { error: 'Pitanje je već odgovoreno.' }];
-  const ids = getDaily(run.date);
-  const q = db.prepare('SELECT * FROM questions WHERE id=?').get(ids[run.q_index]);
-  const step = PLAN[run.q_index];
-  const ms = Date.now() - run.served_at;
-  const limit = RULES.secondsPerQuestion * 1000;
-  const timedOut = ms > limit + RULES.graceMs;
-  const chosen = Number.isInteger(body.choice) && body.choice >= 0 && body.choice <= 3 ? body.choice : null;
-  const correct = !timedOut && chosen === q.correct;
-
-  let { lives, base_score, speed_bonus, max_level, correct_count } = run;
-  let speed = 0;
-  if (correct) {
-    speed = Math.round(step.points * RULES.speedBonusShare * Math.max(0, limit - ms) / limit);
-    base_score += step.points; speed_bonus += speed; correct_count++;
-    max_level = Math.max(max_level, step.level);
-  } else lives--;
-
-  const nextIndex = run.q_index + 1;
-  const over = lives <= 0 || nextIndex >= PLAN.length;
+function tx(fn) {
   db.exec('BEGIN');
-  try {
-    db.prepare('INSERT INTO answers VALUES(?,?,?,?,?,?)').run(run.id, run.q_index, q.id, chosen, correct ? 1 : 0, ms);
-    db.prepare(`UPDATE runs SET q_index=?, lives=?, base_score=?, speed_bonus=?, score=?, max_level=?, correct_count=?,
-                served_at=?, total_ms=total_ms+? WHERE id=?`)
-      .run(over ? run.q_index : nextIndex, lives, base_score, speed_bonus, base_score + speed_bonus, max_level,
-        correct_count, over ? null : Date.now(), Math.min(ms, limit), run.id);
-    const updated = db.prepare('SELECT * FROM runs WHERE id=?').get(run.id);
-    if (over) finishRun(updated, user, date);
-    db.exec('COMMIT');
-  } catch (e) { db.exec('ROLLBACK'); throw e; }
-  const after = db.prepare('SELECT * FROM runs WHERE id=?').get(run.id);
-  return [200, {
-    result: { correct, timedOut, correctChoice: q.correct, gained: correct ? step.points : 0, speedBonus: speed },
-    run: runState(after, ids),
-  }];
+  try { const r = fn(); db.exec('COMMIT'); return r; } catch (e) { db.exec('ROLLBACK'); throw e; }
+}
+
+// Sljedeće pitanje: igrač prije prikaza bira hoće li uložiti najstariji zarađeni ulog (×2, ×3, ...)
+function next(user, body) {
+  const date = today(); const row = loadRun(user.id, date);
+  if (!row || row.status !== 'playing') return [409, { error: 'Nema aktivne igre.' }];
+  const st = stateOf(row);
+  if (st.status === 'question') return [200, { run: runView(row) }];      // već prikazano: vrati isto, sat teče dalje
+  if (body.q !== st.q) return [409, { error: 'Stanje igre se promijenilo, osvježi stranicu.' }];
+  Game.serve(st, body.double === true, Date.now());
+  saveRun(row, st);
+  return [200, { run: runView(loadRun(user.id, date)) }];
+}
+
+function answer(user, body) {
+  const date = today(); const row = loadRun(user.id, date);
+  if (!row || row.status !== 'playing') return [409, { error: 'Nema aktivne igre.' }];
+  const st = stateOf(row);
+  if (st.status !== 'question' || body.q !== st.q) return [409, { error: 'Pitanje je već odgovoreno.' }];
+  const q = questionAt(row, st);
+  const chosen = Number.isInteger(body.choice) && body.choice >= 0 && body.choice <= 3 ? body.choice : null;
+  const now = Date.now(), ms = now - st.servedAt, qIndex = st.q;
+  const result = tx(() => {
+    const r = Game.answer(st, chosen, q.correct, now);
+    db.prepare('INSERT INTO answers(run_id, q_index, question_id, chosen, correct, ms, doubled) VALUES(?,?,?,?,?,?,?)')
+      .run(row.id, qIndex, q.id, chosen, r.correct ? 1 : 0, ms, r.mult);   // stupac doubled čuva multiplikator (1 = bez uloga)
+    if (st.status === 'finished') finishRun(row, st, user, date); else saveRun(row, st);
+    return r;
+  });
+  return [200, { result, run: runView(loadRun(user.id, date)) }];
+}
+
+// Rezultat igrača za jedan dan iz njegovih piramida (RULES.dailyScore): najbolja, zbroj ili prva
+const DAY_AGG = { best: 'MAX(score)', sum: 'SUM(score)', first: 'MAX(CASE WHEN attempt=1 THEN score END)' }[RULES.dailyScore] || 'MAX(score)';
+const DAYS = `SELECT user_id, date, ${DAY_AGG} score, MAX(max_level) max_level, MAX(correct_count) correct_count,
+  MIN(total_ms) ms, COUNT(*) attempts FROM runs WHERE status='finished' GROUP BY user_id, date`;
+function dayScore(userId, date) {
+  const r = db.prepare(`SELECT * FROM (${DAYS}) WHERE user_id=? AND date=?`).get(userId, date);
+  return r ? r.score : null;
 }
 
 function leaderboard(period) {
@@ -215,9 +232,9 @@ function leaderboard(period) {
   if (period === 'weekly') { where = 'r.date >= ? AND r.date <= ?'; args = [weekStart(d), d]; }
   if (period === 'alltime') { where = '1=1'; args = []; }
   return db.prepare(`
-    SELECT u.username, SUM(r.score) score, MAX(r.max_level) max_level, COUNT(*) games, SUM(r.total_ms) ms
-    FROM runs r JOIN users u ON u.id=r.user_id
-    WHERE r.status='finished' AND ${where}
+    SELECT u.username, SUM(r.score) score, MAX(r.max_level) max_level, COUNT(*) games, SUM(r.ms) ms
+    FROM (${DAYS}) r JOIN users u ON u.id=r.user_id
+    WHERE r.score IS NOT NULL AND ${where}
     GROUP BY u.id ORDER BY score DESC, ms ASC LIMIT 50`).all(...args);
 }
 
@@ -227,8 +244,9 @@ function profile(username) {
   const stats = db.prepare(`SELECT COUNT(*) games, COALESCE(MAX(score),0) best_score, COALESCE(MAX(max_level),0) max_level,
     COALESCE(SUM(score),0) total, COALESCE(SUM(max_level=5),0) summits
     FROM runs WHERE user_id=? AND status='finished'`).get(u.id);
-  const recent = db.prepare(`SELECT date, score, max_level, correct_count FROM runs
-    WHERE user_id=? AND status='finished' ORDER BY date DESC LIMIT 14`).all(u.id);
+  stats.total = db.prepare(`SELECT COALESCE(SUM(score),0) t FROM (${DAYS}) WHERE user_id=?`).get(u.id).t;   // kao na ljestvici
+  const recent = db.prepare(`SELECT date, score, max_level, correct_count, attempts FROM (${DAYS})
+    WHERE user_id=? AND score IS NOT NULL ORDER BY date DESC LIMIT 14`).all(u.id);
   // niz se prekida ako igrač nije igrao jučer ni danas
   const d = today();
   const streak = (u.last_played === d || u.last_played === addDays(d, -1)) ? u.streak : 0;
@@ -301,19 +319,24 @@ const server = http.createServer(async (req, res) => {
     const player = closeStaleRuns(user);
 
     if (p === '/api/me') {
-      const date = today();
-      const run = db.prepare('SELECT * FROM runs WHERE user_id=? AND date=?').get(user.id, date);
-      return send(res, 200, { username: user.username, date, run: run ? runState(run, getDaily(date)) : null });
+      const date = today(); const row = loadRun(user.id, date);
+      return send(res, 200, { username: user.username, date, streak: streakOf(player, date), run: row ? runView(row) : null });
     }
     if (p === '/api/run/start' && req.method === 'POST') {
-      const date = today(); const ids = getDaily(date);
-      const now = Date.now();
-      db.prepare(`INSERT OR IGNORE INTO runs(user_id, date, status, lives, served_at, started_at) VALUES(?,?,?,?,?,?)`)
-        .run(user.id, date, 'playing', RULES.lives, now, now);
-      // ako igra već postoji, vraćamo njeno stanje (ne može se ponovno pokrenuti; vrijeme teče od prvog prikaza)
-      const run = db.prepare('SELECT * FROM runs WHERE user_id=? AND date=?').get(user.id, date);
-      return send(res, 200, { run: runState(run, ids) });
+      const date = today(), last = loadRun(user.id, date);
+      // nedovršena piramida se nastavlja; nova se otvara samo na izričit zahtjev ({ again: true }) nakon završene
+      let attempt = 1;
+      if (last) {
+        if (last.status !== 'finished' || body.again !== true) return send(res, 200, { run: runView(last) });
+        if (last.attempt >= RULES.attemptsPerDay) return send(res, 409, { error: `Danas si odigrao sve ${RULES.attemptsPerDay} piramide.`, run: runView(last) });
+        attempt = last.attempt + 1;
+      }
+      getDaily(date, attempt);
+      db.prepare(`INSERT OR IGNORE INTO runs(user_id, date, attempt, status, lives, started_at, state) VALUES(?,?,?,?,?,?,?)`)
+        .run(user.id, date, attempt, 'playing', RULES.lives, Date.now(), JSON.stringify(Game.newRun()));
+      return send(res, 200, { run: runView(loadRun(user.id, date)) });
     }
+    if (p === '/api/run/next' && req.method === 'POST') { const [s, d] = next(player, body); return send(res, s, d); }
     if (p === '/api/run/answer' && req.method === 'POST') { const [s, d] = answer(player, body); return send(res, s, d); }
 
     send(res, 404, { error: 'Nepoznata ruta.' });
@@ -328,4 +351,4 @@ if (require.main === module) {
   // uredno gašenje (hosting šalje SIGTERM pri novoj verziji) da baza ostane zatvorena čisto
   for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => server.close(() => { db.close(); process.exit(0); }));
 }
-module.exports = { server, db, RULES, getDaily, today };
+module.exports = { server, db, RULES, Game, getDaily, today };
