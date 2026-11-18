@@ -1,0 +1,100 @@
+# Zakazani agent: svako jutro priprema provjerena pitanja i raspored za idućih nekoliko dana
+# te ih stavlja u pull request "dnevna-pitanja" na pregled. Ništa ne ide u igru bez spajanja PR-a.
+# Upute i što treba postaviti: agent/README.md
+name: Dnevna pitanja
+
+on:
+  schedule:
+    - cron: '15 4 * * *'          # 04:15 UTC = 05:15 zimi / 06:15 ljeti po hrvatskom vremenu
+  workflow_dispatch:
+    inputs:
+      dana:
+        description: 'Za koliko dana unaprijed (prazno = iz agent/config.json)'
+        required: false
+      odbaci:
+        description: 'ID-evi pitanja koja treba odbaciti, odvojeni zarezom (npr. p20261118-004)'
+        required: false
+      bez_api:
+        description: 'Samo složi raspored iz postojećih pitanja, bez poziva API-ja'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: dnevna-pitanja
+  cancel-in-progress: false
+
+jobs:
+  pripremi:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GRANA: dnevna-pitanja
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Ako PR s pitanjima još čeka pregled, nastavi na istoj grani (da se isti dani ne plaćaju dvaput).
+      - name: Odaberi granu
+        run: |
+          OTVOREN=$(gh pr list --head "$GRANA" --state open --json number -q '.[0].number')
+          if [ -n "$OTVOREN" ]; then
+            git checkout -B "$GRANA" "origin/$GRANA"
+          else
+            git checkout -B "$GRANA"
+          fi
+          echo "OTVOREN=$OTVOREN" >> "$GITHUB_ENV"
+
+      - run: npm ci --prefix agent
+
+      - name: Pokreni agenta
+        id: agent
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          DANA: ${{ inputs.dana }}
+          ODBACI: ${{ inputs.odbaci }}
+          BEZ_API: ${{ inputs.bez_api }}
+        run: |
+          ARGS=(--izvjesce "$RUNNER_TEMP/izvjesce.md")
+          [ -n "$DANA" ] && ARGS+=(--dana "$DANA")
+          [ -n "$ODBACI" ] && ARGS+=(--odbaci "$ODBACI")
+          [ "$BEZ_API" = "true" ] && ARGS+=(--bez-api)
+          set +e
+          node agent/pripremi.js "${ARGS[@]}"
+          KOD=$?
+          set -e
+          cat "$RUNNER_TEMP/izvjesce.md" >> "$GITHUB_STEP_SUMMARY" || true
+          if [ $KOD -eq 2 ]; then echo "::warning::Barem jedan dan nema raspored; vidi izvješće."; elif [ $KOD -ne 0 ]; then exit $KOD; fi
+
+      - name: Otvori ili dopuni pull request
+        run: |
+          git add pitanja
+          if git diff --cached --quiet; then echo "Nema promjena."; exit 0; fi
+          git config user.name "dnevna-pitanja[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          DATUM=$(TZ=Europe/Zagreb date +%Y-%m-%d)
+          git commit -q -m "Dnevna pitanja: priprema od $DATUM"
+          if [ -n "$OTVOREN" ]; then
+            git push origin "$GRANA"
+            gh pr comment "$OTVOREN" --body-file "$RUNNER_TEMP/izvjesce.md"
+          else
+            git push --force origin "$GRANA"
+            {
+              echo "Pitanja i rasporede je pripremio agent (agent/pripremi.js). Svako pitanje ima izvor i doslovan citat koje je program provjerio na stranici, a drugi poziv modela je naslijepo potvrdio odgovor."
+              echo
+              echo "**Prije spajanja:** pregledaj pitanja ispod. Loše pitanje odbaci ručnim pokretanjem posla *Dnevna pitanja* s poljem *odbaci* (raspored se sam presloži)."
+              echo
+              cat "$RUNNER_TEMP/izvjesce.md"
+            } > "$RUNNER_TEMP/opis.md"
+            gh pr create --head "$GRANA" --base "${{ github.event.repository.default_branch }}" \
+              --title "Dnevna pitanja od $DATUM" --body-file "$RUNNER_TEMP/opis.md"
+          fi

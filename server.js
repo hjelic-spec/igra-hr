@@ -12,6 +12,7 @@ const TZ = 'Europe/Zagreb';
 
 // ---------- Pravila igre: zajednički modul (isti kod koristi i probna verzija u pregledniku) ----------
 const Game = require('./public/game.js');
+const Pitanja = require('./pitanja');
 const { RULES } = Game;
 
 // ---------- Baza ----------
@@ -66,10 +67,21 @@ db.exec('CREATE INDEX IF NOT EXISTS runs_date ON runs(date, score DESC)');
 // Učitaj početna pitanja (točan je prvi; spremamo opcije u stalnom izmiješanom redoslijedu)
 {
   const ins = db.prepare('INSERT OR IGNORE INTO questions(level,text,options,correct) VALUES(?,?,?,?)');
-  for (const [level, text, opts] of require('./questions.js')) {
+  const sva = [...require('./questions.js'), ...Pitanja.provjerenaPitanja().map(p => [p.razina, p.pitanje, p.odgovori])];
+  for (const [level, text, opts] of sva) {
     const order = shuffle([0, 1, 2, 3], hashSeed(text));
     ins.run(level, text, JSON.stringify(order.map(i => opts[i])), order.indexOf(0));
   }
+}
+
+// Raspored koji je pripremio agent (pitanja/raspored/DATUM.json), preveden u id-eve iz baze; null ako ga nema.
+function plannedIds(date) {
+  const piramide = Pitanja.piramideZaDan(date);
+  if (!piramide) return null;
+  const byText = db.prepare('SELECT id, level FROM questions WHERE text=?');
+  // TODO kad igra dobije više piramida dnevno: vratiti sve piramide, ne samo prvu.
+  const ids = piramide[0].map((p, i) => { const q = byText.get(p.pitanje); return q && q.level === Game.PLAN[i].level ? q.id : null; });
+  return ids.length === Game.PLAN.length && ids.every(Boolean) ? ids : null;
 }
 
 function hashSeed(s) { return crypto.createHash('sha256').update(s).digest().readUInt32LE(0); }
@@ -93,8 +105,8 @@ function getDaily(date, attempt = 1) {
   date = dailyKey(date, attempt);
   const row = db.prepare('SELECT question_ids FROM daily WHERE date=?').get(date);
   if (row) return JSON.parse(row.question_ids);
-  const ids = [];
-  for (const l of RULES.levels) {
+  const ids = plannedIds(date) || [];
+  if (!ids.length) for (const l of RULES.levels) {
     // najmanje korištena pitanja te razine; unutar istog broja korištenja deterministički redoslijed po datumu
     const qs = db.prepare('SELECT id, times_used FROM questions WHERE level=?').all(l.level);
     if (qs.length < l.count) throw new Error(`Premalo pitanja za razinu ${l.level}`);
