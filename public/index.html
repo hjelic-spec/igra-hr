@@ -90,6 +90,8 @@ h2 { font-size: 20px; line-height: 1.25; font-weight: 700; }
 .timer { height: 6px; border-radius: 3px; background: var(--sky-3); overflow: hidden; margin: 10px 0 2px; }
 .timer i { display: block; height: 100%; background: var(--stone); transition: width 1s linear, background .3s; }
 .timer.low i { background: var(--ember); }
+.timer.reserve i { background: var(--gold); }
+.timer.reserve.low i { background: var(--ember); }
 .meta { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; color: var(--stone-dim); font-variant-numeric: tabular-nums; }
 .fb { min-height: 28px; margin-top: 12px; font: 700 16px/1.4 var(--font-display); }
 .fb.ok { color: var(--gold); } .fb.bad { color: var(--ember); }
@@ -248,7 +250,7 @@ function hud(run) {
   return `<div class="hud">
     <div><small>Bodovi</small><b id="cur">${run.current}</b></div>
     <div class="dbl"><small>Ulozi · ⚡ ${run.fastStreak}/${R.earnDouble.streak}</small><b aria-label="Zarađeni ulozi: ${run.stakes.length ? run.stakes.map(m => '×' + m).join(', ') : 'nema'}">${run.stakes.length ? run.stakes.map(m => '×' + m).join(' ') : '–'}</b></div>
-    <div class="lives"><small>Životi</small><b aria-label="${run.lives} od ${R.lives}">${hearts}</b></div></div>`;
+    <div class="lives"><small>Životi · <span class="bank" title="Rezerva vremena">⏱ +${Math.round(run.bankMs / 1000)} s</span></small><b aria-label="${run.lives} od ${R.lives}">${hearts}</b></div></div>`;
 }
 function floatText(t, bad) {
   const el = document.createElement('div'); el.className = 'float' + (bad ? ' bad' : ''); el.textContent = t;
@@ -280,9 +282,10 @@ function intro() {
     <h1>15 pitanja. Jedan uspon dnevno.</h1>
     <ul class="rules">
       <li><span>⏱</span><span>${R.secondsPerQuestion} sekundi po pitanju. Brži odgovor donosi do +${R.speedBonusShare * 100} % bodova.</span></li>
+      <li><span>⌛</span><span><b>Rezerva vremena</b>: točan odgovor za manje od ${R.timeBank.fastMs / 1000} s sprema +${R.timeBank.earnMs / 1000} s (najviše ${R.timeBank.maxMs / 1000} s). Kad istekne ${R.secondsPerQuestion} s, sat sam troši rezervu.</span></li>
       <li><span>−</span><span>Kriv odgovor ili istek vremena oduzima bodove tog pitanja.</span></li>
       <li><span>♥</span><span>Imaš ${R.lives} života. Druga greška završava uspon, a vrijede bodovi koje tada imaš.</span></li>
-      <li><span>⚡</span><span><b>Ulog se zarađuje</b>: ${R.earnDouble.streak} točna odgovora zaredom, svaki za manje od ${R.earnDouble.withinMs / 1000} sekunde. Svaka takva trojka donosi novi ulog, a svaki sljedeći je jači: prvi ×2, drugi ×3, treći ×4 i tako dalje. Ulog biraš prije nego što vidiš pitanje: točno donosi bodove puta ulog, krivo ih toliko i oduzima.</span></li>
+      <li><span>⚡</span><span><b>Ulog se zarađuje</b>: ${R.earnDouble.streak} točna odgovora zaredom, svaki za manje od ${R.earnDouble.withinMs / 1000} sekunde. Svaka takva trojka donosi novi ulog ×2, a ulozi se skupljaju. Ulog biraš prije nego što vidiš pitanje: točno donosi dvostruko, krivo oduzima dvostruko.</span></li>
       <li><span>🔥</span><span>Igraj svaki dan za bonus niza: +${R.streakBonusPerDay} bodova po danu, najviše +${R.streakBonusMax}.</span></li>
     </ul>
     <button class="btn wide" id="start" style="margin-top:20px">Kreni na uspon</button></div>`;
@@ -322,13 +325,14 @@ function question(run) {
     ${hud(run)}
     ${pyramid(run, { compact: true })}
     <div class="panel fade-in">
-      <div class="meta"><span>Pitanje ${run.q + 1} · ${run.next.points}${run.mult > 1 ? ' ×' + run.mult : ''} bodova</span><span id="secs">${q.secondsLeft} s</span></div>
-      <div class="timer" id="tm"><i id="bar" style="width:${q.secondsLeft / R.secondsPerQuestion * 100}%"></i></div>
+      <div class="meta"><span>Pitanje ${run.q + 1} · ${run.next.points}${run.mult > 1 ? ' ×' + run.mult : ''} bodova</span><span id="secs"></span></div>
+      <div class="timer" id="tm"><i id="bar"></i></div>
       <p class="q">${esc(q.text)}</p>
       <div class="opts">${q.options.map((o, i) => `<button class="opt" data-i="${i}"><span class="k">${keys[i]}</span><span>${esc(o)}</span></button>`).join('')}</div>
       <div class="fb" id="fb" aria-live="polite"></div>
     </div></div>`;
-  let left = q.secondsLeft, done = false;
+  const reserve = q.reserveSec || 0;
+  let left = q.totalLeft ?? q.secondsLeft, done = false;
   const submit = async choice => {
     if (done) return; done = true; clearInterval(timerId);
     document.querySelectorAll('.opt').forEach(b => b.disabled = true);
@@ -341,11 +345,11 @@ function question(run) {
       if (res.correct) {
         const fast = res.ms <= R.earnDouble.withinMs;
         fb.className = 'fb ok';
-        fb.textContent = `Točno${fast ? ' ⚡' : ''}! +${res.gained}${res.speedBonus ? ` i +${res.speedBonus} za brzinu` : ''}` + (res.earned ? ` · Zaradio si ulog ×${res.earned}!` : '');
+        fb.textContent = `Točno${fast ? ' ⚡' : ''}! +${res.gained}${res.speedBonus ? ` i +${res.speedBonus} za brzinu` : ''}` + (res.bankEarned ? ` · +${res.bankEarned / 1000} s rezerve` : '') + (res.earned ? ` · Zaradio si ulog ×${res.earned}!` : '');
         floatText(res.earned ? '⚡ ×' + res.earned : '+' + (res.gained + res.speedBonus)); res.event === 'summit' ? sfx.summit() : res.earned ? sfx.earn() : sfx.right();
       } else {
         fb.className = 'fb bad';
-        fb.textContent = (res.timedOut ? 'Vrijeme je isteklo.' : 'Netočno.') + (res.gained < 0 ? ` ${res.gained} bodova` : '');
+        fb.textContent = (res.timedOut || choice === null ? 'Vrijeme je isteklo.' : 'Netočno.') + (res.gained < 0 ? ` ${res.gained} bodova` : '');
         if (res.gained < 0) floatText(String(res.gained), true);
         sfx.wrong();
       }
@@ -353,10 +357,18 @@ function question(run) {
     } catch (e) { $('#fb').textContent = e.message; setTimeout(play, 1500); }
   };
   document.querySelector('.opts').onclick = e => { const b = e.target.closest('.opt'); if (b) submit(Number(b.dataset.i)); };
+  // osnovni sat pa rezerva: kad osnovno vrijeme istekne, traka postaje zlatna i troši rezervu
+  const paint = () => {
+    const bar = $('#bar'); if (!bar) return false;
+    const base = left - reserve, inReserve = reserve > 0 && base <= 0;
+    bar.style.width = Math.max(0, inReserve ? left / reserve * 100 : base / R.secondsPerQuestion * 100) + '%';
+    $('#tm').classList.toggle('reserve', inReserve);
+    $('#secs').textContent = inReserve ? `⏱ rezerva ${Math.max(0, left)} s` : `${base} s${reserve ? ` + ${reserve} s` : ''}`;
+    return true;
+  };
+  paint();
   const tick = () => {
-    left--; const bar = $('#bar'); if (!bar) return clearInterval(timerId);
-    bar.style.width = Math.max(0, left / R.secondsPerQuestion * 100) + '%';
-    $('#secs').textContent = Math.max(0, left) + ' s';
+    left--; if (!paint()) return clearInterval(timerId);
     if (left <= 5) { $('#tm').classList.add('low'); if (left > 0) sfx.tick(); }
     if (left <= 0) submit(null);
   };

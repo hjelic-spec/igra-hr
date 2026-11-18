@@ -17,9 +17,12 @@
     speedBonusShare: 0.5,         // najviše +50 % bodova pitanja za brz odgovor
     // kriv odgovor (ili istek vremena) oduzima bodove pitanja; uz ulog pomnoženo multiplikatorom uloga. Rezultat ne ide ispod 0.
     // Ulog se zarađuje: 3 točna odgovora zaredom, svaki unutar 3 s od prikaza pitanja (mjeri server).
-    // Svaka 3 takva odgovora donose još jedan ulog; multiplikator raste: 1. zarađeni ×2, 2. ×3, 3. ×4, 4. ×5 ...
+    // Svaka 3 takva odgovora donose još jedan ulog ×2 (multStep 0: svi ulozi su ×2; 1 bi davao ×2, ×3, ×4 ...).
     // Ulozi se skupljaju i troše redom kojim su zarađeni; kriv ili spor odgovor ruši brzi niz.
-    earnDouble: { streak: 3, withinMs: 3000, firstMult: 2, multStep: 1 },
+    earnDouble: { streak: 3, withinMs: 3000, firstMult: 2, multStep: 0 },
+    // Rezerva vremena: točan odgovor unutar 5 s sprema +2 s (najviše 10 s). Kad osnovnih 20 s istekne,
+    // sat automatski troši rezervu. Potrošeno se oduzima; server računa rok kao 20 s + rezerva u trenutku prikaza.
+    timeBank: { fastMs: 5000, earnMs: 2000, maxMs: 10000 },
     streakBonusPerDay: 5,         // +5 bodova po uzastopnom danu nakon prvog
     streakBonusMax: 50,
   };
@@ -29,7 +32,7 @@
   // status: 'ready' (čeka sljedeće pitanje), 'question' (pitanje je prikazano, sat teče), 'finished'
   function newRun() {
     return { q: 0, status: 'ready', lives: RULES.lives, base: 0, speed: 0,
-      stakes: [], earnedCount: 0, fastStreak: 0, mult: 1, servedAt: null, answers: [],
+      stakes: [], earnedCount: 0, fastStreak: 0, mult: 1, bankMs: 0, limitMs: null, servedAt: null, answers: [],
       maxLevel: 0, correctCount: 0, totalMs: 0, out: false, streakBonus: 0 };
   }
 
@@ -48,6 +51,7 @@
     norm(run);
     if (run.status !== 'ready') throw new Error('Pitanje je već prikazano.');
     run.mult = wantStake && run.stakes.length ? run.stakes.shift() : 1;
+    run.limitMs = RULES.secondsPerQuestion * 1000 + (run.bankMs || 0);
     run.servedAt = now; run.status = 'question';
     return run;
   }
@@ -58,7 +62,10 @@
     if (run.status !== 'question') throw new Error('Nema prikazanog pitanja.');
     const step = PLAN[run.q], limit = RULES.secondsPerQuestion * 1000;
     const ms = now - run.servedAt;
-    const timedOut = ms > limit + RULES.graceMs;
+    const total = run.limitMs || limit;                  // osnovno vrijeme + rezerva zatečena pri prikazu
+    const timedOut = ms > total + RULES.graceMs;
+    const bankUsed = Math.min(run.bankMs || 0, Math.max(0, ms - limit));
+    run.bankMs = (run.bankMs || 0) - bankUsed;
     const correct = !timedOut && choice === correctIndex;
     const mult = run.mult;
     let gained = 0, speed = 0;
@@ -85,8 +92,13 @@
         run.earnedCount++; run.stakes.push(earned);
       }
     } else run.fastStreak = 0;
+    // rezerva vremena za brz točan odgovor
+    const T = RULES.timeBank;
+    let bankEarned = 0;
+    if (correct && ms <= T.fastMs) { bankEarned = Math.min(T.earnMs, T.maxMs - run.bankMs); run.bankMs += bankEarned; }
     run.answers.push({ c: correct, d: mult > 1, m: mult });
-    run.totalMs += Math.min(ms, limit);
+    run.totalMs += Math.min(ms, total);
+    run.limitMs = null;
     run.mult = 1; run.servedAt = null;
 
     let event = null;
@@ -97,7 +109,7 @@
     } else {
       run.q++; run.status = 'ready';
     }
-    return { correct, timedOut, correctChoice: correctIndex, gained, speedBonus: speed, doubled: mult > 1, mult, earned, ms, event };
+    return { correct, timedOut, correctChoice: correctIndex, gained, speedBonus: speed, doubled: mult > 1, mult, earned, bankUsed, bankEarned, bankMs: run.bankMs, ms, event };
   }
 
   // Što klijent smije vidjeti (bez točnih odgovora)
@@ -107,13 +119,16 @@
     const v = { status: run.status, q: run.q, total: TOTAL, lives: run.lives, score: finalScore(run),
       current: current(run), base: run.base, speedBonus: run.speed, stakes: run.stakes.slice(), doublesLeft: run.stakes.length, nextStake: run.stakes[0] || 0,
       nextEarn: RULES.earnDouble.firstMult + RULES.earnDouble.multStep * (run.earnedCount || 0),
-      fastStreak: run.fastStreak || 0, mult: run.mult, doubled: run.mult > 1,
+      fastStreak: run.fastStreak || 0, mult: run.mult, doubled: run.mult > 1, bankMs: run.bankMs || 0,
       answers: run.answers.slice(), maxLevel: run.maxLevel, correctCount: run.correctCount,
       out: run.out, streakBonus: run.streakBonus || 0,
       next: { level: step.level, points: step.points } };
     if (run.status === 'question' && question) {
+      const base = RULES.secondsPerQuestion * 1000, total = run.limitMs || base, el = now - run.servedAt;
       v.question = { text: question.text, options: question.options,
-        secondsLeft: Math.max(0, Math.ceil((RULES.secondsPerQuestion * 1000 - (now - run.servedAt)) / 1000)) };
+        secondsLeft: Math.max(0, Math.ceil((base - el) / 1000)),                       // osnovni sat
+        reserveSec: Math.round((total - base) / 1000),                                 // rezerva dostupna za ovo pitanje
+        totalLeft: Math.max(0, Math.ceil((total - el) / 1000)) };                      // osnovno + rezerva
     }
     return v;
   }
