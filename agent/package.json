@@ -1,0 +1,8 @@
+{
+  "name": "dnevna-pitanja-agent",
+  "private": true,
+  "description": "Zakazani agent koji priprema provjerena pitanja za Dnevnu piramidu. Igra (server.js) ne ovisi o ovom paketu.",
+  "engines": { "node": ">=22.13" },
+  "scripts": { "pripremi": "node pripremi.js" },
+  "dependencies": { "@anthropic-ai/sdk": "1.10.0" }
+}

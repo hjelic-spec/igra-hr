@@ -1,0 +1,45 @@
+{
+  "_napomena": "Postavke agenta za dnevna pitanja. Objašnjenje svake postavke je u agent/README.md.",
+  "bezPonavljanjaDana": 90,
+  "piramideDnevno": 3,
+  "danaUnaprijed": 3,
+  "uvijekNovaPitanja": false,
+  "dodatnaRezervaPoRazini": 0,
+  "maxPokusajaPoRazini": 4,
+  "maxTrosakPoPokretanjuUSD": 15,
+  "generator": {
+    "model": "claude-opus-5-5",
+    "effort": "medium",
+    "pitanjaPoPozivu": 8,
+    "visakZbogOdbijanja": 1.5,
+    "maxPretraga": 12,
+    "maxDohvata": 12,
+    "maxTokenaPoStranici": 12000,
+    "maxKrugova": 6,
+    "maxIzbjegavaj": 300
+  },
+  "provjera": {
+    "model": "claude-opus-5-5",
+    "effort": "medium"
+  },
+  "cijene": {
+    "_izvor": "Cjenik Claude API-ja za claude-opus-5-5 (USD po milijun tokena) i web pretraživanje (USD po 1000 pretraga). Provjeriti na https://claude.com/pricing prije promjene modela.",
+    "ulazPoMil": 4,
+    "cachePoMil": 0.2,
+    "izlazPoMil": 20,
+    "pretragaPoTisucu": 10
+  },
+  "slicnost": { "pitanje": 0.55, "istiOdgovor": 0.3 },
+  "kategorije": ["zemljopis", "povijest", "prirodne znanosti", "književnost i jezik", "umjetnost i glazba", "sport", "hrvatska baština", "tehnika i izumi"],
+  "dopusteneDomene": [
+    "enciklopedija.hr",
+    "hbl.lzmk.hr",
+    "proleksis.lzmk.hr",
+    "lzmk.hr",
+    "britannica.com",
+    "dzs.gov.hr",
+    "nasa.gov",
+    "europa.eu",
+    "unesco.org"
+  ]
+}

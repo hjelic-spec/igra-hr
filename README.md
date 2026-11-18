@@ -47,3 +47,8 @@ Pravila su u jednom modulu koji koriste i server i probna verzija u pregledniku,
 nakon toga se pitanja vrte (prvo najmanje korištena). Za pravu igru treba **barem nekoliko stotina pitanja**,
 po razinama u omjeru 5:4:3:2:1 (npr. za 1 godinu: ~1825 / 1460 / 1095 / 730 / 365).
 Prije objave svaku činjenicu provjeriti u pouzdanom izvoru (npr. Hrvatska enciklopedija, enciklopedija.hr).
+
+**Agent za dnevna pitanja** (`agent/`, upute u `agent/README.md`): zakazani GitHub Actions posao svaki dan
+priprema provjerena pitanja (izvor + doslovan citat koji program provjeri na stranici, slijepa provjera drugim
+pozivom modela, filtar duplikata) i raspored u `pitanja/raspored/`, te ih otvara kao pull request na pregled.
+Server koristi raspored za današnji dan ako postoji, a inače radi kao prije.
