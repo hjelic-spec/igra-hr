@@ -187,7 +187,7 @@ function tx(fn) {
   try { const r = fn(); db.exec('COMMIT'); return r; } catch (e) { db.exec('ROLLBACK'); throw e; }
 }
 
-// Sljedeće pitanje: server prikazuje pitanje i pokreće sat; multiplikator (Fibonacci bonus) određuju pravila, ne klijent
+// Sljedeće pitanje: server prikazuje pitanje i pokreće sat; multiplikator (bonus za brzinu) određuju pravila, ne klijent
 function next(user, body) {
   const date = today(); const row = loadRun(user.id, date);
   if (!row || row.status !== 'playing') return [409, { error: 'Nema aktivne igre.' }];
