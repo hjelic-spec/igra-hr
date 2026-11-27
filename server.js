@@ -187,14 +187,14 @@ function tx(fn) {
   try { const r = fn(); db.exec('COMMIT'); return r; } catch (e) { db.exec('ROLLBACK'); throw e; }
 }
 
-// Sljedeće pitanje: igrač prije prikaza bira hoće li uložiti najstariji zarađeni ulog (×2, ×3, ...)
+// Sljedeće pitanje: server prikazuje pitanje i pokreće sat; multiplikator (Fibonacci bonus) određuju pravila, ne klijent
 function next(user, body) {
   const date = today(); const row = loadRun(user.id, date);
   if (!row || row.status !== 'playing') return [409, { error: 'Nema aktivne igre.' }];
   const st = stateOf(row);
   if (st.status === 'question') return [200, { run: runView(row) }];      // već prikazano: vrati isto, sat teče dalje
   if (body.q !== st.q) return [409, { error: 'Stanje igre se promijenilo, osvježi stranicu.' }];
-  Game.serve(st, body.double === true, Date.now());
+  Game.serve(st, Date.now());
   saveRun(row, st);
   return [200, { run: runView(loadRun(user.id, date)) }];
 }
@@ -210,7 +210,7 @@ function answer(user, body) {
   const result = tx(() => {
     const r = Game.answer(st, chosen, q.correct, now);
     db.prepare('INSERT INTO answers(run_id, q_index, question_id, chosen, correct, ms, doubled) VALUES(?,?,?,?,?,?,?)')
-      .run(row.id, qIndex, q.id, chosen, r.correct ? 1 : 0, ms, r.mult);   // stupac doubled čuva multiplikator (1 = bez uloga)
+      .run(row.id, qIndex, q.id, chosen, r.correct ? 1 : 0, ms, r.mult);   // stupac doubled (staro ime) čuva multiplikator (1 = bez bonusa)
     if (st.status === 'finished') finishRun(row, st, user, date); else saveRun(row, st);
     return r;
   });
