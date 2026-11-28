@@ -8,7 +8,7 @@ Potreban je samo **Node.js 22.13 ili noviji** (koristi ugrađeni `node:sqlite`, 
 
 ```
 npm start          # http://localhost:3000
-npm test           # 8 automatskih testova
+npm test           # 14 automatskih testova
 ```
 Varijable: `PORT`, `DB_FILE` (put do SQLite baze), `NODE_ENV=production` (kolačić samo preko HTTPS-a).
 Node ispisuje upozorenje da je `node:sqlite` eksperimentalan; to je očekivano.
@@ -16,17 +16,17 @@ Node ispisuje upozorenje da je `node:sqlite` eksperimentalan; to je očekivano.
 ## Pravila (u `public/game.js`, objekt `RULES`)
 Pravila su u jednom modulu koji koriste i server i probna verzija u pregledniku, pa se ne mogu razići.
 - 15 pitanja u 5 razina (5-4-3-2-1), vrijede 10, 20, 40, 80 i 160 bodova.
-- 10 s po pitanju; brzina donosi do +50 % bodova pitanja.
+- 10 s po pitanju. Rezerva vremena i bonus bodova za brzinu (do +50 %) ukinuti su; brzinu nagrađuje samo brz pogodak ×2.
 - Kriv odgovor ili istek vremena oduzima bodove tog pitanja.
 - 2 života: druga greška završava uspon, a konačni rezultat su bodovi u tom trenutku. Rezultat ne ide ispod 0.
-- **Dupli ili ništa se zarađuje**: 3 točna odgovora zaredom, svaki unutar 3 s od prikaza pitanja (mjeri server),
-  donose ulog ×2, svaka sljedeća trojka još jedan (skupljaju se). Kriv ili sporiji odgovor ruši brzi niz. Ulog se bira prije prikaza
-  pitanja: točno donosi dvostruko, krivo oduzima dvostruko. Pragovi su u `RULES.earnDouble`.
-- **Rezerva vremena**: točan odgovor unutar 5 s sprema +2 s, najviše 6 s. Kad osnovnih 10 s istekne, sat sam troši rezervu;
-  potrošeno se oduzima. Server računa rok kao 10 s + rezerva u trenutku prikaza pitanja. Brojevi su u `RULES.timeBank`.
+- **Brzi niz** (zamijenio je "Dupli ili ništa"): svaki točan odgovor unutar 3 s od prikaza pitanja, bez prekida, povećava
+  multiplikator bodova sljedećeg pitanja za 1: ×2, ×3, ×4 ... Sporiji ili kriv odgovor prekida niz i vraća na ×1.
+  Kazna za kriv odgovor se ne množi. Bez gornje granice (najviše ×15 na zadnjem pitanju); savršen uspon vrijedi 6630 bodova
+  (bez bonusa 610). Vrijeme mjeri server (od slanja pitanja do primitka odgovora), pa je uključen i put kroz mrežu;
+  zato server prihvaća do 3,3 s (`latencyMs`). Na traci vremena zvjezdica ★ označava granicu od 3 s. Brojevi su u `RULES.fastBonus`.
 - **3 piramide dnevno**: svaka s drugim pitanjima (1., 2. i 3. piramida dana iste su za sve igrače). Na ljestvicu ide najbolja od tri (`RULES.dailyScore`).
 - **Niz dana**: +5 bodova po uzastopnom danu, najviše +50; u zaglavlju se prikazuje 🔥.
-- **Dijeljenje**: na kraju se kopira piramida od emojija (🟩 🟨 🟥 💥) bez ijednog pitanja ili odgovora.
+- **Dijeljenje**: na kraju se kopira piramida od emojija (🟩 točno, 🟨 točno uz bonus, 🟥 netočno) bez ijednog pitanja ili odgovora.
 - Novi dan počinje u ponoć po hrvatskom vremenu (Europe/Zagreb); kraj igre prikazuje odbrojavanje.
 - Zvuk i vibracija (gdje uređaj podržava) mogu se isključiti gumbom 🔊.
 

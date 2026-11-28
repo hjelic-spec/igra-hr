@@ -28,9 +28,9 @@ function delay(name, ms) {
   db.prepare('UPDATE runs SET state=? WHERE id=?').run(JSON.stringify(st), row.id);
 }
 async function player(name) { const c = client(); await c('register', { username: name, password: 'lozinka123' }); return c; }
-// jedan korak: (ulog po želji) → prikaz pitanja → odgovor
-async function play(c, run, { right = true, double = false, choice } = {}) {
-  const n = await c('run/next', { q: run.q, double });
+// jedan korak: prikaz pitanja → odgovor
+async function play(c, run, { right = true, choice } = {}) {
+  const n = await c('run/next', { q: run.q });
   assert.equal(n.status, 200); assert.equal(n.body.run.status, 'question');
   const a = await c('run/answer', { q: run.q, choice: choice !== undefined ? choice : right ? correctFor(run.q, run.attempt) : wrongFor(run.q, run.attempt) });
   assert.equal(a.status, 200);
@@ -57,51 +57,64 @@ test('pitanje se ne prikazuje prije "next" i ne otkriva točan odgovor', async (
   const n = await c('run/next', { q: 0, double: false });
   assert.ok(n.body.run.question.text);
   assert.ok(!JSON.stringify(n.body).includes('"correct"'));
-  // ponovljeni "next" ne resetira sat i ne troši ulog
-  const again = await c('run/next', { q: 0, double: true });
-  assert.equal(again.body.run.doubled, false);           // nema zarađenog uloga, pa ga ne može ni uzeti
+  // ponovljeni "next" ne resetira sat; klijent ne može sam tražiti multiplikator (stari "double" se zanemaruje)
+  const again = await c('run/next', { q: 0, double: true, mult: 99 });
+  assert.equal(again.body.run.mult, 1);
+  assert.equal(again.body.run.question.text, n.body.run.question.text);
 });
 
-test('savršen brzi uspon: ulog se zarađuje svaka 3 brza točna i odmah troši', async () => {
+test('savršen brzi uspon: svaki brz točan odgovor diže sljedeće pitanje za 1 (×2, ×3, ×4 ...)', async () => {
   const c = await player('marko');
   let run = (await c('run/start', {})).body.run;
-  const used = [], mults = [];
+  const mults = [];
   while (run.status !== 'finished') {
-    const want = run.nextStake > 0;
-    const r = await play(c, run, { double: want });
-    assert.ok(r.result.correct); assert.ok(r.result.ms <= 3000);
-    if (want) { used.push(run.q); mults.push(r.result.mult); assert.ok(r.result.doubled); }
+    assert.equal(run.mult, Game.bonusMult(run.fastStreak));        // najava prije prikaza pitanja
+    const r = await play(c, run);
+    assert.ok(r.result.correct); assert.ok(r.result.fast); assert.ok(r.result.ms <= RULES.fastBonus.withinMs);
+    assert.equal(r.result.gained, Game.PLAN[run.q].points * r.result.mult);
+    mults.push(r.result.mult);
     run = r.run;
   }
-  assert.deepEqual(used, [3, 6, 9, 12]);          // zarađen nakon 3., 6., 9. i 12. pitanja
-  assert.deepEqual(mults, [2, 2, 2, 2]);          // svaki ulog je ×2
-  const max = RULES.levels.reduce((s, l) => s + l.count * l.points, 0);
-  assert.equal(run.base, max + 10 + 20 + 40 + 80);
-  assert.deepEqual(run.stakes, [2]);              // zarađen nakon 15., ali igra je gotova
-  assert.deepEqual(run.answers.map(a => a.m).filter(m => m > 1), [2, 2, 2, 2]);
-  assert.equal(run.bankMs, RULES.timeBank.maxMs);                // brzi odgovori napunili rezervu do vrha
-  assert.equal(run.score, run.base + run.speedBonus);
+  assert.deepEqual(mults, Array.from({ length: 15 }, (_, i) => i + 1));   // ×1, ×2, ×3 ... ×15
+  assert.equal(run.base, 6630);
+  assert.deepEqual(run.answers.map(a => a.m), mults);
+  assert.equal(run.score, run.base);                             // nema bonusa bodova za brzinu ni rezerve vremena
+  assert.equal(run.bankMs, undefined); assert.equal(run.speedBonus, undefined);
   assert.equal(run.maxLevel, 5);
   assert.equal((await c('run/start', {})).body.run.status, 'finished');
   assert.equal((await c('run/next', { q: 0 })).status, 409);
 });
 
-test('ulog se ne zarađuje sporim ili krivim odgovorom; ulozi se skupljaju', async () => {
+test('spor ili kriv odgovor vraća bonus na ×1; kazna se ne množi; tolerancija za mrežu', async () => {
+  const F = RULES.fastBonus;
   const c = await player('spori');
   let run = (await c('run/start', {})).body.run;
-  for (let i = 0; i < 3; i++) {                    // 3 točna, ali sporija od 3 s
-    await c('run/next', { q: run.q }); delay('spori', 3500);
-    run = (await c('run/answer', { q: run.q, choice: correctFor(run.q) })).body.run;
+  for (let i = 0; i < 2; i++) {                    // 2 točna, ali sporija od 3 s + tolerancija
+    await c('run/next', { q: run.q }); delay('spori', F.withinMs + F.latencyMs + 200);
+    const r = (await c('run/answer', { q: run.q, choice: correctFor(run.q) })).body;
+    assert.ok(r.result.correct); assert.equal(r.result.fast, false); assert.equal(r.result.mult, 1);
+    run = r.run;
   }
-  assert.deepEqual(run.stakes, []); assert.equal(run.fastStreak, 0);
-  run = (await play(c, run)).run; run = (await play(c, run)).run;   // 2 brza
-  assert.equal(run.fastStreak, 2);
-  run = (await play(c, run, { right: false })).run;                // greška ruši niz
-  assert.equal(run.fastStreak, 0); assert.deepEqual(run.stakes, []);
-  for (let i = 0; i < 7; i++) run = (await play(c, run)).run;      // 7 brzih: 2 uloga, niz krenuo ispočetka
-  assert.deepEqual(run.stakes, [2, 2]); assert.equal(run.fastStreak, 1);
-  const r = await play(c, run, { double: true });
-  assert.equal(r.result.mult, 2); assert.deepEqual(r.run.stakes, [2]);
+  assert.equal(run.fastStreak, 0); assert.equal(run.mult, 1);
+  for (let i = 0; i < 3; i++) run = (await play(c, run)).run;      // 3 brza zaredom: ×1, ×2, ×3 → sljedeće ×4
+  assert.equal(run.fastStreak, 3); assert.equal(run.mult, 4);
+  const before = run.current;
+  let r = await play(c, run, { right: false });                    // 6. pitanje (20 bodova) krivo uz ×4
+  assert.equal(r.result.mult, 4); assert.equal(r.result.gained, -20);
+  assert.equal(r.run.current, before - 20);
+  assert.equal(r.run.fastStreak, 0); assert.equal(r.run.mult, 1);
+  run = r.run;
+  // odgovor malo iza 3 s, ali unutar tolerancije za kašnjenje mreže, još se računa kao brz
+  await c('run/next', { q: run.q }); delay('spori', F.withinMs + F.latencyMs - 150);
+  r = (await c('run/answer', { q: run.q, choice: correctFor(run.q) })).body;
+  assert.ok(r.result.fast); assert.equal(r.run.mult, 2);
+  run = r.run;
+  run = (await play(c, run)).run;                                  // još jedan brz: sljedeće ×3
+  assert.equal(run.mult, 3);
+  await c('run/next', { q: run.q }); delay('spori', F.withinMs + F.latencyMs + 1);
+  r = (await c('run/answer', { q: run.q, choice: correctFor(run.q) })).body;   // točno uz ×3, ali sporo: niz se prekida
+  assert.equal(r.result.mult, 3); assert.equal(r.result.gained, 3 * Game.PLAN[run.q].points);
+  assert.equal(r.result.fast, false); assert.equal(r.run.mult, 1);
 });
 
 test('kriv odgovor oduzima bodove pitanja; druga greška završava igru s tadašnjim bodovima', async () => {
@@ -120,26 +133,17 @@ test('kriv odgovor oduzima bodove pitanja; druga greška završava igru s tadaš
   assert.equal((await c('run/stop', {})).status, 404);           // nema više stajanja
 });
 
-test('dupli ili ništa: točno dvostruko, krivo oduzima dvostruko; rezultat ne ide ispod nule', async () => {
-  const c = await player('ulog');
-  let run = (await c('run/start', {})).body.run;
-  for (let i = 0; i < 3; i++) run = (await play(c, run)).run;    // zaradi ulog
-  assert.deepEqual(run.stakes, [2]);
-  let r = await play(c, run, { right: true, double: true });     // 4. pitanje (10) ×2
-  assert.equal(r.result.gained, 20); assert.deepEqual(r.run.stakes, []);
-  run = r.run;
-  for (let i = 0; i < 3; i++) run = (await play(c, run)).run;    // 5.–7. brzo: novi ulog
-  assert.deepEqual(run.stakes, [2]);
-  const before = run.current;
-  r = await play(c, run, { right: false, double: true });        // 8. pitanje (20) krivo uz ulog: −40
-  assert.equal(r.result.gained, -40); assert.equal(r.run.current, before - 40);
-  // donja granica 0, provjereno na samim pravilima
-  const st = Game.newRun(); st.stakes = [2]; Game.serve(st, true, 0);
+test('rezultat ne ide ispod nule; igra spremljena sa starim ulozima nastavlja se bez njih', () => {
+  const st = Game.newRun(); Game.serve(st, 0);
   const res = Game.answer(st, 9, 0, 100);
   assert.equal(res.gained, 0); assert.equal(st.base + st.speed, 0);
-  // igra spremljena po starim pravilima (doublesLeft) nastavlja se s ulozima ×2
-  const old = Game.newRun(); delete old.stakes; delete old.mult; old.doublesLeft = 2; old.doubled = false;
-  assert.deepEqual(Game.view(old).stakes, [2, 2]);
+  // stara pravila: stakes/doublesLeft; ulozi nestaju, započeto pitanje s ×2 ostaje ×2 do odgovora
+  const old = Game.newRun(); old.stakes = [2, 2]; old.earnedCount = 2; old.doublesLeft = 2; old.fastStreak = 2;
+  old.status = 'question'; old.mult = 2; old.servedAt = 0;
+  const v = Game.view(old);
+  assert.equal(v.stakes, undefined); assert.equal(v.mult, 2);
+  const r = Game.answer(old, 0, 0, 500);
+  assert.equal(r.mult, 2); assert.equal(old.fastStreak, 3); assert.equal(Game.view(old).mult, 4);
 });
 
 test('istek vremena se računa na serveru', async () => {
@@ -166,10 +170,10 @@ test('bonus niza za uzastopne dane', async () => {
 });
 
 test('tekst za dijeljenje ne sadrži pitanja ni odgovore', () => {
-  const v = { answers: [{ c: true, d: false }, { c: false, d: true }, { c: true, d: true }], score: 77, maxLevel: 1, out: false };
+  const v = { answers: [{ c: true, m: 1 }, { c: false, m: 3 }, { c: true, m: 2 }, { c: true, d: true }], score: 77, maxLevel: 1, out: false };
   const t = Game.shareText(v, '17. 11. 2026.', 4);
   assert.match(t, /^Dnevna piramida 17\. 11\. 2026\./);
-  assert.ok(t.includes('🟩💥🟨⬜⬜')); assert.ok(t.includes('77 bodova')); assert.ok(t.includes('🔥4'));
+  assert.ok(t.includes('🟩🟥🟨🟨⬜')); assert.ok(!t.includes('💥')); assert.ok(t.includes('77 bodova')); assert.ok(t.includes('🔥4'));
   assert.equal(t.split('\n').length, 7);
 });
 
@@ -197,25 +201,24 @@ test('nedovršena igra od jučer se zaključuje s bodovima koje je igrač imao',
   assert.equal((await c('profile/stari')).body.streak, 2);
 });
 
-test('rezerva vremena: brz točan odgovor sprema 2 s (najviše 6), sat je troši nakon osnovnog vremena', () => {
-  const T = RULES.timeBank, base = RULES.secondsPerQuestion * 1000;
+test('bez rezerve vremena i bonusa za brzinu: rok je uvijek 10 s, bodovi su bodovi pitanja × multiplikator', () => {
+  const limit = RULES.secondsPerQuestion * 1000;
+  assert.equal(RULES.timeBank, undefined); assert.equal(RULES.speedBonusShare, undefined);
   const st = Game.newRun();
   let t = 0;
-  const q = (ms, right = true) => { Game.serve(st, false, t); t += ms; return Game.answer(st, right ? 0 : 1, 0, t); };
-  assert.equal(q(4000).bankEarned, T.earnMs);                    // ispod 5 s: +2 s
-  assert.equal(q(6000).bankEarned, 0);                           // sporije: ništa
-  assert.equal(q(1000, false).bankEarned, 0);                    // brz, ali kriv: ništa
-  for (let i = 0; i < 6; i++) q(1000);
-  assert.equal(st.bankMs, T.maxMs);                              // strop 6 s
-  // pitanje s rezervom: odgovor 4 s nakon osnovnog vremena vrijedi i troši 4 s rezerve
-  Game.serve(st, false, t);
-  assert.equal(Game.view(st, { text: 'x', options: [] }, t).question.reserveSec, 6);
-  assert.equal(Game.view(st, { text: 'x', options: [] }, t).question.totalLeft, base / 1000 + 6);
-  t += base + 4000; const r = Game.answer(st, 0, 0, t);
-  assert.ok(r.correct); assert.equal(r.bankUsed, 4000); assert.equal(st.bankMs, 2000);
-  // bez dovoljno rezerve: istek vremena i rezerva je potrošena do kraja
-  Game.serve(st, false, t); t += base + 2000 + RULES.graceMs + 1; const r2 = Game.answer(st, 0, 0, t);
-  assert.ok(r2.timedOut); assert.equal(st.bankMs, 0);
+  const q = (ms, right = true) => { Game.serve(st, t); t += ms; return Game.answer(st, right ? 0 : 1, 0, t); };
+  let r = q(500);                                                 // vrlo brz odgovor: samo bodovi pitanja
+  assert.equal(r.gained, 10); assert.equal(r.speedBonus, undefined); assert.equal(st.speed, 0);
+  for (let i = 0; i < 5; i++) q(500);                             // mnogo brzih odgovora ne produljuje rok
+  Game.serve(st, t);
+  assert.equal(Game.view(st, { text: 'x', options: [] }, t).question.secondsLeft, limit / 1000);
+  t += limit + RULES.graceMs + 1; r = Game.answer(st, 0, 0, t);
+  assert.ok(r.timedOut);
+  // pitanje prikazano po starim pravilima zadržava rezervu koju je imalo; stari bonus za brzinu ostaje u rezultatu
+  const old = { ...Game.newRun(), status: 'question', servedAt: 0, limitMs: limit + 6000, bankMs: 6000, speed: 15, base: 100 };
+  assert.equal(Game.view(old, { text: 'x', options: [] }, 0).question.secondsLeft, limit / 1000 + 6);
+  r = Game.answer(old, 0, 0, limit + 4000);
+  assert.ok(r.correct); assert.equal(old.bankMs, undefined); assert.equal(Game.finalScore(old), 100 + 15 + 10);
 });
 
 test('3 piramide dnevno: različita pitanja, iste za sve; na ljestvicu ide najbolja', async () => {

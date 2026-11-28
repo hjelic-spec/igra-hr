@@ -14,15 +14,14 @@
     secondsPerQuestion: 10,
     graceMs: 1500,                // tolerancija za mrežno kašnjenje
     lives: 2,                     // druga greška završava uspon; vrijede bodovi u tom trenutku
-    speedBonusShare: 0.5,         // najviše +50 % bodova pitanja za brz odgovor
-    // kriv odgovor (ili istek vremena) oduzima bodove pitanja; uz ulog pomnoženo multiplikatorom uloga. Rezultat ne ide ispod 0.
-    // Ulog se zarađuje: 3 točna odgovora zaredom, svaki unutar 3 s od prikaza pitanja (mjeri server).
-    // Svaka 3 takva odgovora donose još jedan ulog ×2 (multStep 0: svi ulozi su ×2; 1 bi davao ×2, ×3, ×4 ...).
-    // Ulozi se skupljaju i troše redom kojim su zarađeni; kriv ili spor odgovor ruši brzi niz.
-    earnDouble: { streak: 3, withinMs: 3000, firstMult: 2, multStep: 0 },
-    // Rezerva vremena: točan odgovor unutar 5 s sprema +2 s (najviše 6 s). Kad osnovnih 10 s istekne,
-    // sat automatski troši rezervu. Potrošeno se oduzima; server računa rok kao 10 s + rezerva u trenutku prikaza.
-    timeBank: { fastMs: 5000, earnMs: 2000, maxMs: 6000 },
+    // kriv odgovor (ili istek vremena) oduzima bodove pitanja (bez multiplikatora). Rezultat ne ide ispod 0.
+    // Bonus za brzinu: svaki točan odgovor unutar 3 s od prikaza pitanja, bez prekida, povećava multiplikator
+    // SLJEDEĆEG pitanja za 1: ×2, ×3, ×4 ... Kriv ili sporiji odgovor prekida niz i vraća na ×1.
+    // Množe se bodovi pitanja; kazna za kriv odgovor se ne množi. maxMult 0 = bez gornje granice (najviše ×15 jer je 15 pitanja).
+    // Vrijeme mjeri server od slanja pitanja do primitka odgovora, pa uključuje i put kroz mrežu;
+    // latencyMs je tolerancija za to kašnjenje (igrač vidi granicu od 3 s, server prihvaća do 3,3 s).
+    fastBonus: { withinMs: 3000, latencyMs: 300, step: 1, maxMult: 0 },
+    // Rezerva vremena i bonus bodova za brzinu (do +50 %) ukinuti su 2026-11-27; brzinu nagrađuje samo fastBonus.
     attemptsPerDay: 3,            // 3 piramide dnevno, svaka s drugim pitanjima (iste za sve igrače)
     dailyScore: 'best',           // što ide na ljestvicu: 'best' (najbolja od tri), 'sum' (zbroj) ili 'first' (prva)
     streakBonusPerDay: 5,         // +5 bodova po uzastopnom danu nakon prvog
@@ -34,26 +33,32 @@
   // status: 'ready' (čeka sljedeće pitanje), 'question' (pitanje je prikazano, sat teče), 'finished'
   function newRun() {
     return { q: 0, status: 'ready', lives: RULES.lives, base: 0, speed: 0,
-      stakes: [], earnedCount: 0, fastStreak: 0, mult: 1, bankMs: 0, limitMs: null, servedAt: null, answers: [],
+      fastStreak: 0, mult: 1, limitMs: null, servedAt: null, answers: [],
       maxLevel: 0, correctCount: 0, totalMs: 0, out: false, streakBonus: 0 };
   }
 
-  const current = run => run.base + run.speed;
+  const current = run => run.base + (run.speed || 0);   // speed: bonus za brzinu iz starih igara (nove ga nemaju)
   const finalScore = run => current(run) + (run.streakBonus || 0);
 
-  // stanja spremljena prije rastućih uloga imala su doublesLeft (svi ×2)
+  // Multiplikator sljedećeg pitanja nakon n brzih točnih odgovora zaredom: 1 + n (×1, ×2, ×3, ×4 ...)
+  function bonusMult(n) {
+    const F = RULES.fastBonus, m = 1 + n * F.step;
+    return F.maxMult > 0 ? Math.min(m, F.maxMult) : m;
+  }
+
+  // stanja spremljena po starim pravilima (ulozi ×2) nemaju više uloga; zatečeni multiplikator ostaje do odgovora
   function norm(run) {
-    if (!Array.isArray(run.stakes)) { run.stakes = Array(run.doublesLeft || 0).fill(2); run.earnedCount = run.stakes.length; }
     if (typeof run.mult !== 'number') run.mult = run.doubled ? 2 : 1;
-    delete run.doublesLeft; delete run.doubled;
+    if (typeof run.fastStreak !== 'number') run.fastStreak = 0;
+    delete run.stakes; delete run.earnedCount; delete run.doublesLeft; delete run.doubled; delete run.bankMs;
     return run;
   }
 
-  function serve(run, wantStake, now) {
+  function serve(run, now) {
     norm(run);
     if (run.status !== 'ready') throw new Error('Pitanje je već prikazano.');
-    run.mult = wantStake && run.stakes.length ? run.stakes.shift() : 1;
-    run.limitMs = RULES.secondsPerQuestion * 1000 + (run.bankMs || 0);
+    run.mult = bonusMult(run.fastStreak);
+    run.limitMs = RULES.secondsPerQuestion * 1000;
     run.servedAt = now; run.status = 'question';
     return run;
   }
@@ -64,41 +69,28 @@
     if (run.status !== 'question') throw new Error('Nema prikazanog pitanja.');
     const step = PLAN[run.q], limit = RULES.secondsPerQuestion * 1000;
     const ms = now - run.servedAt;
-    const total = run.limitMs || limit;                  // osnovno vrijeme + rezerva zatečena pri prikazu
+    const total = Math.max(run.limitMs || 0, limit);     // pitanje prikazano po starim pravilima zadržava svoju rezervu
     const timedOut = ms > total + RULES.graceMs;
-    const bankUsed = Math.min(run.bankMs || 0, Math.max(0, ms - limit));
-    run.bankMs = (run.bankMs || 0) - bankUsed;
     const correct = !timedOut && choice === correctIndex;
     const mult = run.mult;
-    let gained = 0, speed = 0;
+    let gained = 0;
     if (correct) {
       gained = step.points * mult;
-      speed = Math.round(step.points * RULES.speedBonusShare * Math.max(0, limit - ms) / limit);
-      run.base += gained; run.speed += speed; run.correctCount++;
+      run.base += gained; run.correctCount++;
       run.maxLevel = Math.max(run.maxLevel, step.level);
     } else {
       run.lives--;
-      gained = -step.points * mult;
+      gained = -step.points;
       run.base += gained;
       // rezultat ne ide u minus
-      if (current(run) < 0) { gained -= current(run); run.base = -run.speed; }
+      if (current(run) < 0) { gained -= current(run); run.base = -(run.speed || 0); }
     }
-    // brzi niz za zarađivanje duplog uloga
-    const E = RULES.earnDouble;
-    let earned = 0;
-    if (correct && ms <= E.withinMs) {
-      run.fastStreak = (run.fastStreak || 0) + 1;
-      if (run.fastStreak >= E.streak) {
-        run.fastStreak = 0;
-        earned = E.firstMult + E.multStep * run.earnedCount;   // multiplikator novog uloga
-        run.earnedCount++; run.stakes.push(earned);
-      }
-    } else run.fastStreak = 0;
-    // rezerva vremena za brz točan odgovor
-    const T = RULES.timeBank;
-    let bankEarned = 0;
-    if (correct && ms <= T.fastMs) { bankEarned = Math.min(T.earnMs, T.maxMs - run.bankMs); run.bankMs += bankEarned; }
-    run.answers.push({ c: correct, d: mult > 1, m: mult });
+    // bonus za brzinu: brz točan odgovor diže multiplikator sljedećeg pitanja za 1, inače se vraća na ×1
+    const F = RULES.fastBonus;
+    const fast = correct && ms <= F.withinMs + F.latencyMs;
+    run.fastStreak = fast ? run.fastStreak + 1 : 0;
+    const nextMult = bonusMult(run.fastStreak);
+    run.answers.push({ c: correct, m: mult });
     run.totalMs += Math.min(ms, total);
     run.limitMs = null;
     run.mult = 1; run.servedAt = null;
@@ -111,7 +103,7 @@
     } else {
       run.q++; run.status = 'ready';
     }
-    return { correct, timedOut, correctChoice: correctIndex, gained, speedBonus: speed, doubled: mult > 1, mult, earned, bankUsed, bankEarned, bankMs: run.bankMs, ms, event };
+    return { correct, timedOut, correctChoice: correctIndex, gained, mult, fast, nextMult, ms, event };
   }
 
   // Što klijent smije vidjeti (bez točnih odgovora)
@@ -119,25 +111,22 @@
     norm(run);
     const step = PLAN[Math.min(run.q, TOTAL - 1)];
     const v = { status: run.status, q: run.q, total: TOTAL, lives: run.lives, score: finalScore(run),
-      current: current(run), base: run.base, speedBonus: run.speed, stakes: run.stakes.slice(), doublesLeft: run.stakes.length, nextStake: run.stakes[0] || 0,
-      nextEarn: RULES.earnDouble.firstMult + RULES.earnDouble.multStep * (run.earnedCount || 0),
-      fastStreak: run.fastStreak || 0, mult: run.mult, doubled: run.mult > 1, bankMs: run.bankMs || 0,
+      current: current(run), base: run.base,
+      fastStreak: run.fastStreak, mult: run.status === 'question' ? run.mult : bonusMult(run.fastStreak),
       answers: run.answers.slice(), maxLevel: run.maxLevel, correctCount: run.correctCount,
       out: run.out, streakBonus: run.streakBonus || 0,
       next: { level: step.level, points: step.points } };
     if (run.status === 'question' && question) {
-      const base = RULES.secondsPerQuestion * 1000, total = run.limitMs || base, el = now - run.servedAt;
+      const total = Math.max(run.limitMs || 0, RULES.secondsPerQuestion * 1000), el = now - run.servedAt;
       v.question = { text: question.text, options: question.options,
-        secondsLeft: Math.max(0, Math.ceil((base - el) / 1000)),                       // osnovni sat
-        reserveSec: Math.round((total - base) / 1000),                                 // rezerva dostupna za ovo pitanje
-        totalLeft: Math.max(0, Math.ceil((total - el) / 1000)) };                      // osnovno + rezerva
+        secondsLeft: Math.max(0, Math.ceil((total - el) / 1000)) };
     }
     return v;
   }
 
   // Rezultat za dijeljenje: piramida od emojija, bez ijednog pitanja ili odgovora
   function shareText(v, dateLabel, streak) {
-    const mark = a => !a ? '⬜' : a.c ? (a.d ? '🟨' : '🟩') : (a.d ? '💥' : '🟥');
+    const mark = a => !a ? '⬜' : a.c ? ((a.m || (a.d ? 2 : 1)) > 1 ? '🟨' : '🟩') : '🟥';
     const rows = []; let i = 0;
     for (const l of RULES.levels) {
       let row = '';
@@ -153,6 +142,6 @@
 
   function streakBonusFor(streak) { return Math.min(RULES.streakBonusMax, Math.max(0, streak - 1) * RULES.streakBonusPerDay); }
 
-  const Game = { RULES, PLAN, TOTAL, newRun, serve, answer, view, finalScore, shareText, streakBonusFor };
+  const Game = { RULES, PLAN, TOTAL, newRun, serve, answer, view, finalScore, shareText, streakBonusFor, bonusMult };
   if (typeof module !== 'undefined' && module.exports) module.exports = Game; else root.Game = Game;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -69,7 +69,7 @@ button:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid 
 .hud small { display: block; font-size: 12px; color: var(--stone-dim); }
 .hud b { font: 700 19px/1.2 var(--font-display); font-variant-numeric: tabular-nums; }
 .hud .lives b { color: var(--ember); letter-spacing: 2px; }
-.hud .dbl b { color: var(--ember); }
+.hud .dbl b { color: var(--gold); }
 
 .panel { margin-top: 14px; background: var(--sky-2); border: 1px solid var(--sky-3); border-radius: var(--r); padding: 18px; }
 .eyebrow { font-size: 12px; text-transform: uppercase; letter-spacing: .12em; color: var(--stone-dim); font-weight: 700; }
@@ -88,11 +88,17 @@ h2 { font-size: 20px; line-height: 1.25; font-weight: 700; }
 .opt.wrong .k { background: var(--ember); color: #fff; }
 .opt:disabled { cursor: default; }
 @media (max-width: 430px) { .opts { gap: 8px; } .opt { flex-direction: column; align-items: flex-start; justify-content: flex-start; padding: 10px 12px 12px; gap: 6px; font-size: 15px; line-height: 1.3; } .opt .k { width: 24px; height: 24px; } }
-.timer { height: 6px; border-radius: 3px; background: var(--sky-3); overflow: hidden; margin: 10px 0 2px; }
+.tbar { position: relative; margin: 20px 0 16px; }
+.timer { height: 10px; border-radius: 5px; background: var(--sky-3); overflow: hidden; }
 .timer i { display: block; height: 100%; background: var(--stone); transition: width 1s linear, background .3s; }
 .timer.low i { background: var(--ember); }
-.timer.reserve i { background: var(--gold); }
-.timer.reserve.low i { background: var(--ember); }
+/* zvjezdica na traci: do nje (prve 3 s) brz točan odgovor diže vrijednost sljedećeg pitanja.
+   Zlatna zvijezda na tamnom krugu sa zlatnim obrubom: kontrast zvijezde prema krugu 10:1, a tamni prsten (11:1 prema traci) odvaja je i od svijetle trake.
+   Nakon 3 s ostaje jednako vidljiva, samo prelazi u boju kamena (oznaka "prošlo"), da igrač i dalje vidi granicu. */
+.tbar .star { position: absolute; top: 50%; transform: translate(-50%, -50%); width: 36px; height: 36px; border-radius: 50%;
+  display: grid; place-items: center; font-size: 22px; line-height: 1; color: var(--gold); background: var(--sky);
+  border: 3px solid var(--gold); box-shadow: 0 0 0 3px var(--sky-2), 0 0 16px -2px var(--gold); pointer-events: none; transition: color .3s, border-color .3s, box-shadow .3s; }
+.tbar.past .star { color: var(--stone); border-color: var(--stone); box-shadow: 0 0 0 3px var(--sky-2); }
 .meta { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; color: var(--stone-dim); font-variant-numeric: tabular-nums; }
 .fb { min-height: 28px; margin-top: 12px; font: 700 16px/1.4 var(--font-display); }
 .fb.ok { color: var(--gold); } .fb.bad { color: var(--ember); }
@@ -105,18 +111,15 @@ h2 { font-size: 20px; line-height: 1.25; font-weight: 700; }
 .row-btns { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
 .row-btns .btn { flex: 1 1 160px; }
 
-/* Dupli ili ništa */
-.double { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; margin-top: 14px; padding: 12px 14px; border-radius: 12px; border: 1px dashed var(--sky-3); background: transparent; }
-.double .sw { flex: none; width: 46px; height: 26px; border-radius: 13px; background: var(--sky-3); position: relative; transition: background .2s; }
-.double .sw::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: var(--stone); transition: transform .2s; }
-.double[aria-pressed="true"] { border-style: solid; border-color: var(--ember); background: color-mix(in srgb, var(--ember) 10%, transparent); }
-.double[aria-pressed="true"] .sw { background: var(--ember); }
-.double[aria-pressed="true"] .sw::after { transform: translateX(20px); }
-.double:disabled { opacity: .45; cursor: not-allowed; }
-.double strong { display: block; font-family: var(--font-display); font-size: 14px; }
-.double span.small { font-size: 13px; color: var(--stone-dim); }
+/* bonus za brzinu */
+.bonus { display: flex; align-items: center; gap: 12px; margin-top: 14px; padding: 12px 14px; border-radius: 12px; border: 1px dashed var(--sky-3); }
+.bonus.on { border-style: solid; border-color: var(--gold); background: color-mix(in srgb, var(--gold) 10%, transparent); }
+.bonus .x { flex: none; min-width: 46px; text-align: center; font: 800 20px/1 var(--font-display); color: var(--stone-dim); }
+.bonus.on .x { color: var(--gold); }
+.bonus strong { display: block; font-family: var(--font-display); font-size: 14px; }
+.bonus span.small { font-size: 13px; color: var(--stone-dim); }
 .pips { margin-left: auto; display: flex; gap: 4px; }
-.pips i { width: 9px; height: 9px; border-radius: 50%; background: var(--ember); }
+.pips i { width: 9px; height: 9px; border-radius: 50%; background: var(--gold); }
 .pips i.used { background: var(--sky-3); }
 
 
@@ -191,7 +194,7 @@ async function api(path, body) {
 }
 // ---- kraj API ----
 
-let me = null, today = null, streak = 0, view = 'play', timerId = null, countId = null, wantDouble = false;
+let me = null, today = null, streak = 0, view = 'play', timerId = null, countId = null;
 
 // ---------- zvuk i vibracija ----------
 let soundOn = store.get('piramida-zvuk') !== '0', actx = null;
@@ -250,8 +253,8 @@ function hud(run) {
   const hearts = '♥'.repeat(run.lives) + '♡'.repeat(R.lives - run.lives);
   return `<div class="hud">
     <div><small>Bodovi</small><b id="cur">${run.current}</b></div>
-    <div class="dbl"><small>Ulozi · ⚡ ${run.fastStreak}/${R.earnDouble.streak}</small><b aria-label="Zarađeni ulozi: ${run.stakes.length ? run.stakes.map(m => '×' + m).join(', ') : 'nema'}">${run.stakes.length ? run.stakes.map(m => '×' + m).join(' ') : '–'}</b></div>
-    <div class="lives"><small>Životi · <span class="bank" title="Rezerva vremena">⏱ +${Math.round(run.bankMs / 1000)} s</span></small><b aria-label="${run.lives} od ${R.lives}">${hearts}</b></div></div>`;
+    <div class="dbl"><small>Bonus · ⚡ ${run.fastStreak}</small><b aria-label="Multiplikator ${run.status === 'question' ? 'ovog' : 'sljedećeg'} pitanja: ×${run.mult}">×${run.mult}</b></div>
+    <div class="lives"><small>Životi</small><b aria-label="${run.lives} od ${R.lives}">${hearts}</b></div></div>`;
 }
 function floatText(t, bad) {
   const el = document.createElement('div'); el.className = 'float' + (bad ? ' bad' : ''); el.textContent = t;
@@ -282,16 +285,15 @@ function intro() {
     <p class="eyebrow">Izazov za ${fmtDate(today)}</p>
     <h1>15 pitanja. ${R.attemptsPerDay} uspona dnevno.</h1>
     <ul class="rules">
-      <li><span>⏱</span><span>${R.secondsPerQuestion} sekundi po pitanju. Brži odgovor donosi do +${R.speedBonusShare * 100} % bodova.</span></li>
-      <li><span>⌛</span><span><b>Rezerva vremena</b>: točan odgovor za manje od ${R.timeBank.fastMs / 1000} s sprema +${R.timeBank.earnMs / 1000} s (najviše ${R.timeBank.maxMs / 1000} s). Kad istekne ${R.secondsPerQuestion} s, sat sam troši rezervu.</span></li>
+      <li><span>⏱</span><span>${R.secondsPerQuestion} sekundi po pitanju.</span></li>
       <li><span>−</span><span>Kriv odgovor ili istek vremena oduzima bodove tog pitanja.</span></li>
       <li><span>♥</span><span>Imaš ${R.lives} života. Druga greška završava uspon, a vrijede bodovi koje tada imaš.</span></li>
-      <li><span>⚡</span><span><b>Ulog se zarađuje</b>: ${R.earnDouble.streak} točna odgovora zaredom, svaki za manje od ${R.earnDouble.withinMs / 1000} sekunde. Svaka takva trojka donosi novi ulog ×2, a ulozi se skupljaju. Ulog biraš prije nego što vidiš pitanje: točno donosi dvostruko, krivo oduzima dvostruko.</span></li>
+      <li><span>★</span><span><b>Brzi niz</b>: svaki točan odgovor unutar ${R.fastBonus.withinMs / 1000} sekunde (do zvjezdice na traci) diže vrijednost sljedećeg pitanja: ×2, ×3, ×4 ... Sporiji ili kriv odgovor vraća na ×1. Kazna za kriv odgovor se ne množi.</span></li>
       <li><span>▲</span><span><b>${R.attemptsPerDay} piramide dnevno</b>, svaka s drugim pitanjima (iste za sve igrače). Na ljestvicu ide najbolja.</span></li>
       <li><span>🔥</span><span>Igraj svaki dan za bonus niza: +${R.streakBonusPerDay} bodova po danu, najviše +${R.streakBonusMax}.</span></li>
     </ul>
     <button class="btn wide" id="start" style="margin-top:20px">Kreni na uspon</button></div>`;
-  $('#start').onclick = async () => { tone(440, .01, 'sine', 0, .001); const r = await api('run/start', {}); wantDouble = false; render(r.run); };
+  $('#start').onclick = async () => { tone(440, .01, 'sine', 0, .001); const r = await api('run/start', {}); render(r.run); };
 }
 
 function ready(run, { pop = -1, event = null } = {}) {
@@ -301,21 +303,16 @@ function ready(run, { pop = -1, event = null } = {}) {
     ${pyramid(run, { pop })}
     <div class="panel fade-in" id="nextPanel">
       <p class="eyebrow">Piramida ${run.attempt || 1}/${run.attempts || 1} · pitanje ${run.q + 1} od ${run.total} · razina ${n.level}</p>
-      <h2>Vrijedi ${n.points} bodova</h2>
-      <button class="double" id="dbl" aria-pressed="${wantDouble && run.nextStake > 0}" ${run.nextStake ? '' : 'disabled'}>
-        <span class="sw" aria-hidden="true"></span>
-        <span><strong>${run.nextStake ? `Uloži ×${run.nextStake}` : 'Ulog'}${run.stakes.length > 1 ? ` · čekaju još ${run.stakes.slice(1).map(m => '×' + m).join(', ')}` : ''}</strong><span class="small">${run.nextStake
-          ? `točno +${n.points * run.nextStake}, krivo −${n.points * run.nextStake}`
-          : `Zaradi ×${run.nextEarn}: ${R.earnDouble.streak} točna zaredom, svaki za manje od ${R.earnDouble.withinMs / 1000} s`}</span></span>
-        <span class="pips" aria-label="Brzi niz ${run.fastStreak} od ${R.earnDouble.streak}">${Array.from({ length: R.earnDouble.streak }, (_, k) => `<i class="${k < run.fastStreak ? '' : 'used'}"></i>`).join('')}</span>
-      </button>
+      <h2>Vrijedi ${n.points * run.mult} bodova</h2>
+      <div class="bonus${run.mult > 1 ? ' on' : ''}">
+        <span class="x" aria-hidden="true">×${run.mult}</span>
+        <span><strong>${run.mult > 1 ? `Brzi niz: ${n.points} × ${run.mult} = ${n.points * run.mult} bodova` : 'Bonus za brzinu'}</strong><span class="small">Točno unutar ${R.fastBonus.withinMs / 1000} s (do ★) pa sljedeće pitanje vrijedi ×${Game.bonusMult(run.fastStreak + 1)}.</span></span>
+      </div>
       <button class="btn wide" id="go" style="margin-top:14px">Prikaži pitanje</button>
     </div></div>`;
-  const dbl = $('#dbl');
-  dbl.onclick = () => { wantDouble = !wantDouble; dbl.setAttribute('aria-pressed', String(wantDouble)); tone(wantDouble ? 520 : 300, .08, 'square', 0, .05); };
   $('#go').onclick = async () => {
     $('#go').disabled = true;
-    try { const r = await api('run/next', { q: run.q, double: wantDouble && run.nextStake > 0 }); wantDouble = false; render(r.run); }
+    try { const r = await api('run/next', { q: run.q }); render(r.run); }
     catch (e) { $('#go').disabled = false; alertMsg(e); }
   };
 }
@@ -328,13 +325,12 @@ function question(run) {
     ${pyramid(run, { compact: true })}
     <div class="panel fade-in">
       <div class="meta"><span>Pitanje ${run.q + 1} · ${run.next.points}${run.mult > 1 ? ' ×' + run.mult : ''} bodova</span><span id="secs"></span></div>
-      <div class="timer" id="tm"><i id="bar"></i></div>
+      <div class="tbar" id="tb"><div class="timer" id="tm"><i id="bar"></i></div><span class="star" style="left:${(1 - R.fastBonus.withinMs / 1000 / R.secondsPerQuestion) * 100}%" title="${R.fastBonus.withinMs / 1000} s: brz točan odgovor diže vrijednost sljedećeg pitanja" aria-hidden="true">★</span></div>
       <p class="q">${esc(q.text)}</p>
       <div class="opts">${q.options.map((o, i) => `<button class="opt" data-i="${i}"><span class="k">${keys[i]}</span><span>${esc(o)}</span></button>`).join('')}</div>
       <div class="fb" id="fb" aria-live="polite"></div>
     </div></div>`;
-  const reserve = q.reserveSec || 0;
-  let left = q.totalLeft ?? q.secondsLeft, done = false;
+  let left = q.secondsLeft, done = false;
   const submit = async choice => {
     if (done) return; done = true; clearInterval(timerId);
     document.querySelectorAll('.opt').forEach(b => b.disabled = true);
@@ -345,13 +341,12 @@ function question(run) {
       if (!res.correct && choice !== null) btns[choice].classList.add('wrong');
       const fb = $('#fb');
       if (res.correct) {
-        const fast = res.ms <= R.earnDouble.withinMs;
         fb.className = 'fb ok';
-        fb.textContent = `Točno${fast ? ' ⚡' : ''}! +${res.gained}${res.speedBonus ? ` i +${res.speedBonus} za brzinu` : ''}` + (res.bankEarned ? ` · +${res.bankEarned / 1000} s rezerve` : '') + (res.earned ? ` · Zaradio si ulog ×${res.earned}!` : '');
-        floatText(res.earned ? '⚡ ×' + res.earned : '+' + (res.gained + res.speedBonus)); res.event === 'summit' ? sfx.summit() : res.earned ? sfx.earn() : sfx.right();
+        fb.textContent = `Točno${res.fast ? ' ⚡' : ''}! +${res.gained}${res.mult > 1 ? ` (×${res.mult})` : ''}` + (res.fast && res.event !== 'summit' && res.event !== 'end' ? ` · sljedeće ×${res.nextMult}` : '');
+        floatText('+' + res.gained); res.event === 'summit' ? sfx.summit() : res.fast ? sfx.earn() : sfx.right();
       } else {
         fb.className = 'fb bad';
-        fb.textContent = (res.timedOut || choice === null ? 'Vrijeme je isteklo.' : 'Netočno.') + (res.gained < 0 ? ` ${res.gained} bodova` : '');
+        fb.textContent = (res.timedOut || choice === null ? 'Vrijeme je isteklo.' : 'Netočno.') + (res.gained < 0 ? ` ${res.gained} bodova` : '') + (res.mult > 1 ? ' · bonus se vraća na ×1' : '');
         if (res.gained < 0) floatText(String(res.gained), true);
         sfx.wrong();
       }
@@ -359,16 +354,17 @@ function question(run) {
     } catch (e) { $('#fb').textContent = e.message; setTimeout(play, 1500); }
   };
   document.querySelector('.opts').onclick = e => { const b = e.target.closest('.opt'); if (b) submit(Number(b.dataset.i)); };
-  // osnovni sat pa rezerva: kad osnovno vrijeme istekne, traka postaje zlatna i troši rezervu
-  const paint = () => {
+  // traka se 1 s linearno kreće prema stanju na idućem otkucaju, pa prati stvarno vrijeme (i zvjezdicu na 3 s) bez kašnjenja
+  const pct = l => Math.max(0, Math.min(100, l / R.secondsPerQuestion * 100)) + '%';
+  const paint = (first = false) => {
     const bar = $('#bar'); if (!bar) return false;
-    const base = left - reserve, inReserve = reserve > 0 && base <= 0;
-    bar.style.width = Math.max(0, inReserve ? left / reserve * 100 : base / R.secondsPerQuestion * 100) + '%';
-    $('#tm').classList.toggle('reserve', inReserve);
-    $('#secs').textContent = inReserve ? `⏱ rezerva ${Math.max(0, left)} s` : `${base} s${reserve ? ` + ${reserve} s` : ''}`;
+    if (first) { bar.style.transition = 'none'; bar.style.width = pct(left); void bar.offsetWidth; bar.style.transition = ''; }
+    bar.style.width = pct(left - 1);
+    $('#tb').classList.toggle('past', R.secondsPerQuestion - left >= R.fastBonus.withinMs / 1000);   // prošle 3 s
+    $('#secs').textContent = `${Math.max(0, left)} s`;
     return true;
   };
-  paint();
+  paint(true);
   const tick = () => {
     left--; if (!paint()) return clearInterval(timerId);
     if (left <= 3) { $('#tm').classList.add('low'); if (left > 0) sfx.tick(); }
@@ -395,7 +391,7 @@ function finished(run, { pop = -1, event = null } = {}) {
     <div class="panel">
       <p class="eyebrow">Pohvali se</p>
       <div class="share" id="shareText">${esc(text)}</div>
-      <div class="legend"><span>🟩 točno</span><span>🟨 točno uz ulog</span><span>🟥 netočno</span><span>💥 netočno uz ulog</span></div>
+      <div class="legend"><span>🟩 točno</span><span>🟨 točno uz bonus</span><span>🟥 netočno</span></div>
       <button class="btn wide" id="copy" style="margin-top:12px">Kopiraj rezultat</button>
       <p class="small" id="copied" aria-live="polite" style="margin:8px 0 0"></p>
     </div>
@@ -416,7 +412,7 @@ function finished(run, { pop = -1, event = null } = {}) {
   $('#toBoard').onclick = () => go('board');
   if ($('#nextPyr')) $('#nextPyr').onclick = async () => {
     $('#nextPyr').disabled = true;
-    try { const r = await api('run/start', { again: true }); wantDouble = false; render(r.run); }
+    try { const r = await api('run/start', { again: true }); render(r.run); }
     catch (e) { $('#nextPyr').disabled = false; alertMsg(e); }
   };
   if ($('#again')) $('#again').onclick = () => newAttempt();
@@ -478,7 +474,7 @@ async function profile(name) {
 function auth(mode = 'register') {
   const reg = mode === 'register';
   $('#app').innerHTML = `<div class="fade-in">
-    ${pyramid({ answers: [{ c: 1 }, { c: 1 }, { c: 1 }, { c: 1 }, { c: 1 }, { c: 1 }, { c: 1 }, { c: 0 }, { c: 1 }, { c: 1 }], status: 'question', q: 10, doubled: false })}
+    ${pyramid({ answers: [{ c: 1 }, { c: 1 }, { c: 1 }, { c: 1 }, { c: 1 }, { c: 1 }, { c: 1 }, { c: 0 }, { c: 1 }, { c: 1 }], status: 'question', q: 10 })}
     <h1>Penji se svaki dan.</h1>
     <p style="color:var(--stone-dim);margin:8px 0 0">Tri piramide od 15 pitanja dnevno, iste za sve igrače. Na ljestvicu ide najbolja.</p>
     <form id="f" class="panel" novalidate>
