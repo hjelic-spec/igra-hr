@@ -92,7 +92,7 @@ h2 { font-size: 20px; line-height: 1.25; font-weight: 700; }
 .timer { height: 10px; border-radius: 5px; background: var(--sky-3); overflow: hidden; }
 .timer i { display: block; height: 100%; background: var(--stone); transition: width 1s linear, background .3s; }
 .timer.low i { background: var(--ember); }
-/* zvjezdica na traci: do nje (prve 3 s) brz točan odgovor udvostručuje sljedeće pitanje.
+/* zvjezdica na traci: do nje (prve 3 s) brz točan odgovor diže vrijednost sljedećeg pitanja.
    Zlatna zvijezda na tamnom krugu sa zlatnim obrubom: kontrast zvijezde prema krugu 10:1, a tamni prsten (11:1 prema traci) odvaja je i od svijetle trake.
    Nakon 3 s ostaje jednako vidljiva, samo prelazi u boju kamena (oznaka "prošlo"), da igrač i dalje vidi granicu. */
 .tbar .star { position: absolute; top: 50%; transform: translate(-50%, -50%); width: 36px; height: 36px; border-radius: 50%;
@@ -288,7 +288,7 @@ function intro() {
       <li><span>⏱</span><span>${R.secondsPerQuestion} sekundi po pitanju.</span></li>
       <li><span>−</span><span>Kriv odgovor ili istek vremena oduzima bodove tog pitanja.</span></li>
       <li><span>♥</span><span>Imaš ${R.lives} života. Druga greška završava uspon, a vrijede bodovi koje tada imaš.</span></li>
-      <li><span>★</span><span><b>Brz pogodak</b>: točan odgovor unutar ${R.fastBonus.withinMs / 1000} sekunde (do zvjezdice na traci) udvostručuje bodove sljedećeg pitanja. Bonus se ne zbraja, uvijek je ×${R.fastBonus.mult}. Kazna za kriv odgovor se ne množi.</span></li>
+      <li><span>★</span><span><b>Brzi niz</b>: svaki točan odgovor unutar ${R.fastBonus.withinMs / 1000} sekunde (do zvjezdice na traci) diže vrijednost sljedećeg pitanja: ×2, ×3, ×4 ... Sporiji ili kriv odgovor vraća na ×1. Kazna za kriv odgovor se ne množi.</span></li>
       <li><span>▲</span><span><b>${R.attemptsPerDay} piramide dnevno</b>, svaka s drugim pitanjima (iste za sve igrače). Na ljestvicu ide najbolja.</span></li>
       <li><span>🔥</span><span>Igraj svaki dan za bonus niza: +${R.streakBonusPerDay} bodova po danu, najviše +${R.streakBonusMax}.</span></li>
     </ul>
@@ -306,7 +306,7 @@ function ready(run, { pop = -1, event = null } = {}) {
       <h2>Vrijedi ${n.points * run.mult} bodova</h2>
       <div class="bonus${run.mult > 1 ? ' on' : ''}">
         <span class="x" aria-hidden="true">×${run.mult}</span>
-        <span><strong>${run.mult > 1 ? `Brz pogodak: ${n.points} × ${run.mult} = ${n.points * run.mult} bodova` : 'Bonus za brzinu'}</strong><span class="small">Točno unutar ${R.fastBonus.withinMs / 1000} s (do ★) pa sljedeće pitanje vrijedi ×${R.fastBonus.mult}.</span></span>
+        <span><strong>${run.mult > 1 ? `Brzi niz: ${n.points} × ${run.mult} = ${n.points * run.mult} bodova` : 'Bonus za brzinu'}</strong><span class="small">Točno unutar ${R.fastBonus.withinMs / 1000} s (do ★) pa sljedeće pitanje vrijedi ×${Game.bonusMult(run.fastStreak + 1)}.</span></span>
       </div>
       <button class="btn wide" id="go" style="margin-top:14px">Prikaži pitanje</button>
     </div></div>`;
@@ -325,7 +325,7 @@ function question(run) {
     ${pyramid(run, { compact: true })}
     <div class="panel fade-in">
       <div class="meta"><span>Pitanje ${run.q + 1} · ${run.next.points}${run.mult > 1 ? ' ×' + run.mult : ''} bodova</span><span id="secs"></span></div>
-      <div class="tbar" id="tb"><div class="timer" id="tm"><i id="bar"></i></div><span class="star" style="left:${(1 - R.fastBonus.withinMs / 1000 / R.secondsPerQuestion) * 100}%" title="${R.fastBonus.withinMs / 1000} s: brz točan odgovor udvostručuje sljedeće pitanje" aria-hidden="true">★</span></div>
+      <div class="tbar" id="tb"><div class="timer" id="tm"><i id="bar"></i></div><span class="star" style="left:${(1 - R.fastBonus.withinMs / 1000 / R.secondsPerQuestion) * 100}%" title="${R.fastBonus.withinMs / 1000} s: brz točan odgovor diže vrijednost sljedećeg pitanja" aria-hidden="true">★</span></div>
       <p class="q">${esc(q.text)}</p>
       <div class="opts">${q.options.map((o, i) => `<button class="opt" data-i="${i}"><span class="k">${keys[i]}</span><span>${esc(o)}</span></button>`).join('')}</div>
       <div class="fb" id="fb" aria-live="polite"></div>
@@ -391,7 +391,7 @@ function finished(run, { pop = -1, event = null } = {}) {
     <div class="panel">
       <p class="eyebrow">Pohvali se</p>
       <div class="share" id="shareText">${esc(text)}</div>
-      <div class="legend"><span>🟩 točno</span><span>🟨 točno uz ×2</span><span>🟥 netočno</span></div>
+      <div class="legend"><span>🟩 točno</span><span>🟨 točno uz bonus</span><span>🟥 netočno</span></div>
       <button class="btn wide" id="copy" style="margin-top:12px">Kopiraj rezultat</button>
       <p class="small" id="copied" aria-live="polite" style="margin:8px 0 0"></p>
     </div>

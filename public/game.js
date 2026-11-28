@@ -15,12 +15,12 @@
     graceMs: 1500,                // tolerancija za mrežno kašnjenje
     lives: 2,                     // druga greška završava uspon; vrijede bodovi u tom trenutku
     // kriv odgovor (ili istek vremena) oduzima bodove pitanja (bez multiplikatora). Rezultat ne ide ispod 0.
-    // Bonus za brzinu: točan odgovor unutar 3 s od prikaza pitanja udvostručuje bodove SLJEDEĆEG pitanja.
-    // Ne nagomilava se: niz brzih odgovora daje ×2 na svakom sljedećem pitanju (ne ×4, ×8).
-    // Kriv ili sporiji odgovor vraća na ×1. Množe se bodovi pitanja (ne bonus za brzinu); kazna se ne množi.
+    // Bonus za brzinu: svaki točan odgovor unutar 3 s od prikaza pitanja, bez prekida, povećava multiplikator
+    // SLJEDEĆEG pitanja za 1: ×2, ×3, ×4 ... Kriv ili sporiji odgovor prekida niz i vraća na ×1.
+    // Množe se bodovi pitanja; kazna za kriv odgovor se ne množi. maxMult 0 = bez gornje granice (najviše ×15 jer je 15 pitanja).
     // Vrijeme mjeri server od slanja pitanja do primitka odgovora, pa uključuje i put kroz mrežu;
     // latencyMs je tolerancija za to kašnjenje (igrač vidi granicu od 3 s, server prihvaća do 3,3 s).
-    fastBonus: { withinMs: 3000, latencyMs: 300, mult: 2 },
+    fastBonus: { withinMs: 3000, latencyMs: 300, step: 1, maxMult: 0 },
     // Rezerva vremena i bonus bodova za brzinu (do +50 %) ukinuti su 2026-11-27; brzinu nagrađuje samo fastBonus.
     attemptsPerDay: 3,            // 3 piramide dnevno, svaka s drugim pitanjima (iste za sve igrače)
     dailyScore: 'best',           // što ide na ljestvicu: 'best' (najbolja od tri), 'sum' (zbroj) ili 'first' (prva)
@@ -40,8 +40,11 @@
   const current = run => run.base + (run.speed || 0);   // speed: bonus za brzinu iz starih igara (nove ga nemaju)
   const finalScore = run => current(run) + (run.streakBonus || 0);
 
-  // Multiplikator sljedećeg pitanja: ×2 ako je prethodni odgovor bio brz i točan, inače ×1
-  const bonusMult = fastStreak => fastStreak > 0 ? RULES.fastBonus.mult : 1;
+  // Multiplikator sljedećeg pitanja nakon n brzih točnih odgovora zaredom: 1 + n (×1, ×2, ×3, ×4 ...)
+  function bonusMult(n) {
+    const F = RULES.fastBonus, m = 1 + n * F.step;
+    return F.maxMult > 0 ? Math.min(m, F.maxMult) : m;
+  }
 
   // stanja spremljena po starim pravilima (ulozi ×2) nemaju više uloga; zatečeni multiplikator ostaje do odgovora
   function norm(run) {
@@ -82,7 +85,7 @@
       // rezultat ne ide u minus
       if (current(run) < 0) { gained -= current(run); run.base = -(run.speed || 0); }
     }
-    // bonus za brzinu: brz točan odgovor udvostručuje sljedeće pitanje, inače se vraća na ×1
+    // bonus za brzinu: brz točan odgovor diže multiplikator sljedećeg pitanja za 1, inače se vraća na ×1
     const F = RULES.fastBonus;
     const fast = correct && ms <= F.withinMs + F.latencyMs;
     run.fastStreak = fast ? run.fastStreak + 1 : 0;

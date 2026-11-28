@@ -63,7 +63,7 @@ test('pitanje se ne prikazuje prije "next" i ne otkriva točan odgovor', async (
   assert.equal(again.body.run.question.text, n.body.run.question.text);
 });
 
-test('savršen brzi uspon: svaki brz točan odgovor udvostručuje sljedeće pitanje, bez nagomilavanja', async () => {
+test('savršen brzi uspon: svaki brz točan odgovor diže sljedeće pitanje za 1 (×2, ×3, ×4 ...)', async () => {
   const c = await player('marko');
   let run = (await c('run/start', {})).body.run;
   const mults = [];
@@ -75,9 +75,8 @@ test('savršen brzi uspon: svaki brz točan odgovor udvostručuje sljedeće pita
     mults.push(r.result.mult);
     run = r.run;
   }
-  assert.deepEqual(mults, [1, ...Array(14).fill(2)]);              // prvo pitanje ×1, svako sljedeće ×2, nikad ×4
-  const max = RULES.levels.reduce((s, l) => s + l.count * l.points, 0);
-  assert.equal(run.base, 2 * max - 10);
+  assert.deepEqual(mults, Array.from({ length: 15 }, (_, i) => i + 1));   // ×1, ×2, ×3 ... ×15
+  assert.equal(run.base, 6630);
   assert.deepEqual(run.answers.map(a => a.m), mults);
   assert.equal(run.score, run.base);                             // nema bonusa bodova za brzinu ni rezerve vremena
   assert.equal(run.bankMs, undefined); assert.equal(run.speedBonus, undefined);
@@ -97,11 +96,11 @@ test('spor ili kriv odgovor vraća bonus na ×1; kazna se ne množi; tolerancija
     run = r.run;
   }
   assert.equal(run.fastStreak, 0); assert.equal(run.mult, 1);
-  for (let i = 0; i < 3; i++) run = (await play(c, run)).run;      // 3 brza zaredom: i dalje samo ×2
-  assert.equal(run.fastStreak, 3); assert.equal(run.mult, 2);
+  for (let i = 0; i < 3; i++) run = (await play(c, run)).run;      // 3 brza zaredom: ×1, ×2, ×3 → sljedeće ×4
+  assert.equal(run.fastStreak, 3); assert.equal(run.mult, 4);
   const before = run.current;
-  let r = await play(c, run, { right: false });                    // 6. pitanje (20 bodova) krivo uz ×2
-  assert.equal(r.result.mult, 2); assert.equal(r.result.gained, -20);
+  let r = await play(c, run, { right: false });                    // 6. pitanje (20 bodova) krivo uz ×4
+  assert.equal(r.result.mult, 4); assert.equal(r.result.gained, -20);
   assert.equal(r.run.current, before - 20);
   assert.equal(r.run.fastStreak, 0); assert.equal(r.run.mult, 1);
   run = r.run;
@@ -110,9 +109,11 @@ test('spor ili kriv odgovor vraća bonus na ×1; kazna se ne množi; tolerancija
   r = (await c('run/answer', { q: run.q, choice: correctFor(run.q) })).body;
   assert.ok(r.result.fast); assert.equal(r.run.mult, 2);
   run = r.run;
+  run = (await play(c, run)).run;                                  // još jedan brz: sljedeće ×3
+  assert.equal(run.mult, 3);
   await c('run/next', { q: run.q }); delay('spori', F.withinMs + F.latencyMs + 1);
-  r = (await c('run/answer', { q: run.q, choice: correctFor(run.q) })).body;   // točno uz ×2, ali sporo
-  assert.equal(r.result.mult, 2); assert.equal(r.result.gained, 2 * Game.PLAN[run.q].points);
+  r = (await c('run/answer', { q: run.q, choice: correctFor(run.q) })).body;   // točno uz ×3, ali sporo: niz se prekida
+  assert.equal(r.result.mult, 3); assert.equal(r.result.gained, 3 * Game.PLAN[run.q].points);
   assert.equal(r.result.fast, false); assert.equal(r.run.mult, 1);
 });
 
@@ -142,7 +143,7 @@ test('rezultat ne ide ispod nule; igra spremljena sa starim ulozima nastavlja se
   const v = Game.view(old);
   assert.equal(v.stakes, undefined); assert.equal(v.mult, 2);
   const r = Game.answer(old, 0, 0, 500);
-  assert.equal(r.mult, 2); assert.equal(old.fastStreak, 3); assert.equal(Game.view(old).mult, 2);
+  assert.equal(r.mult, 2); assert.equal(old.fastStreak, 3); assert.equal(Game.view(old).mult, 4);
 });
 
 test('istek vremena se računa na serveru', async () => {
